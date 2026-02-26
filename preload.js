@@ -1,0 +1,32 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+    openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
+    readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
+    getTags: () => ipcRenderer.invoke('get-tags'),
+    saveTags: (tags) => ipcRenderer.invoke('save-tags', tags),
+    getImageTags: () => ipcRenderer.invoke('get-image-tags'),
+    saveImageTags: (data) => ipcRenderer.invoke('save-image-tags', data),
+    getImageHash: (imagePath) => ipcRenderer.invoke('get-image-hash', imagePath),
+    addTagToImage: (imagePath, tag) => ipcRenderer.invoke('add-tag-to-image', imagePath, tag),
+    removeTagFromImage: (imagePath, tag) => ipcRenderer.invoke('remove-tag-from-image', imagePath, tag),
+    onOpenFolder: (callback) => ipcRenderer.on('open-folder', (event, path) => callback(path)),
+    
+    openTrashFolderDialog: () => ipcRenderer.invoke('open-trash-folder-dialog'),
+    getTrashFolder: () => ipcRenderer.invoke('get-trash-folder'),
+    setTrashFolder: (folderPath) => ipcRenderer.invoke('set-trash-folder', folderPath),
+    deleteImage: (imagePath) => ipcRenderer.invoke('delete-image', imagePath),
+    undoDeleteImage: (trashPath, originalPath) => ipcRenderer.invoke('undo-delete', trashPath, originalPath),
+    showInFolder: (filePath) => ipcRenderer.invoke('show-in-folder', filePath),
+    getPassword: () => ipcRenderer.invoke('get-password'),
+    setPassword: (password) => ipcRenderer.invoke('set-password', password),
+    verifyPassword: (password) => ipcRenderer.invoke('verify-password', password),
+    getTimeout: () => ipcRenderer.invoke('get-timeout'),
+    setTimeout: (timeout) => ipcRenderer.invoke('set-timeout', timeout),
+    getCategories: () => ipcRenderer.invoke('get-categories'),
+    saveCategories: (categories) => ipcRenderer.invoke('save-categories', categories),
+    getTrashInfo: () => ipcRenderer.invoke('get-trash-info'),
+    emptyTrash: () => ipcRenderer.invoke('empty-trash'),
+    onTrashFolderChanged: (callback) => ipcRenderer.on('trash-folder-changed', (event, path) => callback(path)),
+    onUndoDelete: (callback) => ipcRenderer.on('undo-delete', () => callback())
+});

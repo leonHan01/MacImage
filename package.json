@@ -1,0 +1,54 @@
+{
+  "name": "macimage",
+  "version": "1.0.0",
+  "description": "macOS 图片浏览应用 - 支持标签管理",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac",
+    "build:dmg": "electron-builder --mac dmg"
+  },
+  "keywords": [
+    "electron",
+    "image",
+    "viewer",
+    "macos"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^40.6.1",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.macimage.app",
+    "productName": "MacImage",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.photography",
+      "icon": "icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ]
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  }
+}
