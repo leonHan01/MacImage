@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveCategories: (categories) => ipcRenderer.invoke('save-categories', categories),
     getTrashInfo: () => ipcRenderer.invoke('get-trash-info'),
     emptyTrash: () => ipcRenderer.invoke('empty-trash'),
+    exportConfig: () => ipcRenderer.invoke('export-config'),
+    importConfig: (config) => ipcRenderer.invoke('import-config', config),
+    saveExportFile: (config) => ipcRenderer.invoke('save-export-file', config),
+    openImportFile: () => ipcRenderer.invoke('open-import-file'),
     onTrashFolderChanged: (callback) => ipcRenderer.on('trash-folder-changed', (event, path) => callback(path)),
     onUndoDelete: (callback) => ipcRenderer.on('undo-delete', () => callback())
 });

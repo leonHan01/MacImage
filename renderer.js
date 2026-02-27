@@ -101,6 +101,16 @@ if (emptyTrashBtn) {
     emptyTrashBtn.addEventListener('click', emptyTrash);
 }
 
+const exportConfigBtn = document.getElementById('exportConfigBtn');
+if (exportConfigBtn) {
+    exportConfigBtn.addEventListener('click', exportConfig);
+}
+
+const importConfigBtn = document.getElementById('importConfigBtn');
+if (importConfigBtn) {
+    importConfigBtn.addEventListener('click', importConfig);
+}
+
 document.getElementById('passwordInput').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') handleUnlock();
 });
@@ -639,11 +649,40 @@ function openSettings() {
     renderCategoryList();
     updateTrashFolderDisplay();
     updateTimeoutDisplay();
+    initSettingsNav();
     settingsModal.classList.add('show');
 }
 
 function closeSettings() {
     settingsModal.classList.remove('show');
+}
+
+function initSettingsNav() {
+    const navItems = document.querySelectorAll('.settings-nav-item');
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            const section = item.dataset.section;
+            switchSettingsSection(section);
+        });
+    });
+}
+
+function switchSettingsSection(section) {
+    document.querySelectorAll('.settings-nav-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.dataset.section === section) {
+            item.classList.add('active');
+        }
+    });
+    
+    document.querySelectorAll('.settings-panel').forEach(panel => {
+        panel.classList.remove('active');
+    });
+    
+    const targetPanel = document.getElementById('settings' + section.charAt(0).toUpperCase() + section.slice(1));
+    if (targetPanel) {
+        targetPanel.classList.add('active');
+    }
 }
 
 function renderCategoryList() {
@@ -829,6 +868,74 @@ async function emptyTrash() {
         updateTrashInfo();
     } else {
         alert('清空回收站失败: ' + result.error);
+    }
+}
+
+async function exportConfig() {
+    const result = await window.electronAPI.exportConfig();
+    
+    if (!result.success) {
+        alert('导出配置失败: ' + result.error);
+        return;
+    }
+    
+    const saveResult = await window.electronAPI.saveExportFile(result.config);
+    
+    if (saveResult.success) {
+        alert('配置已成功导出');
+    } else if (!saveResult.cancelled) {
+        alert('保存文件失败: ' + saveResult.error);
+    }
+}
+
+async function importConfig() {
+    const result = await window.electronAPI.openImportFile();
+    
+    if (!result.success) {
+        if (!result.cancelled) {
+            alert('打开文件失败: ' + result.error);
+        }
+        return;
+    }
+    
+    const config = result.config;
+    
+    if (!config.tags && !config.categories) {
+        alert('无效的配置文件');
+        return;
+    }
+    
+    let message = '确定要导入配置吗？\n\n';
+    if (config.tags) {
+        message += `将导入 ${config.tags.length} 个标签\n`;
+    }
+    if (config.categories) {
+        message += `将导入 ${config.categories.length} 个分类\n`;
+    }
+    message += '\n注意：这将覆盖当前的标签和分类设置！';
+    
+    if (!confirm(message)) {
+        return;
+    }
+    
+    const importResult = await window.electronAPI.importConfig(config);
+    
+    if (importResult.success) {
+        if (config.categories) {
+            TAG_CATEGORIES = config.categories;
+        }
+        if (config.tags) {
+            allTags = config.tags;
+        }
+        
+        renderTagList();
+        renderCategoryList();
+        renderTagFilter();
+        updateCategorySelects();
+        
+        alert('配置已成功导入');
+    } else {
+        alert('导入配置失败: ' + importResult.error);
     }
 }
 

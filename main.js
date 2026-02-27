@@ -497,3 +497,85 @@ ipcMain.handle('empty-trash', async () => {
         return { success: false, error: error.message };
     }
 });
+
+ipcMain.handle('export-config', async () => {
+    try {
+        const config = {
+            tags: store.get('tags') || [],
+            categories: store.get('categories') || null,
+            exportTime: new Date().toISOString(),
+            version: '1.0'
+        };
+        return { success: true, config };
+    } catch (error) {
+        console.error('Error exporting config:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('import-config', async (event, config) => {
+    try {
+        if (!config || typeof config !== 'object') {
+            return { success: false, error: '无效的配置数据' };
+        }
+        
+        if (config.tags && Array.isArray(config.tags)) {
+            store.set('tags', config.tags);
+        }
+        
+        if (config.categories && Array.isArray(config.categories)) {
+            store.set('categories', config.categories);
+        }
+        
+        return { success: true };
+    } catch (error) {
+        console.error('Error importing config:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('save-export-file', async (event, config) => {
+    try {
+        const { filePath } = await dialog.showSaveDialog(mainWindow, {
+            title: '导出配置',
+            defaultPath: `macimage-config-${Date.now()}.json`,
+            filters: [
+                { name: 'JSON', extensions: ['json'] }
+            ]
+        });
+        
+        if (!filePath) {
+            return { success: false, cancelled: true };
+        }
+        
+        fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf-8');
+        return { success: true, filePath };
+    } catch (error) {
+        console.error('Error saving export file:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('open-import-file', async () => {
+    try {
+        const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+            title: '导入配置',
+            filters: [
+                { name: 'JSON', extensions: ['json'] }
+            ],
+            properties: ['openFile']
+        });
+        
+        if (!filePaths || filePaths.length === 0) {
+            return { success: false, cancelled: true };
+        }
+        
+        const content = fs.readFileSync(filePaths[0], 'utf-8');
+        const config = JSON.parse(content);
+        
+        return { success: true, config };
+    } catch (error) {
+        console.error('Error opening import file:', error);
+        return { success: false, error: error.message };
+    }
+});

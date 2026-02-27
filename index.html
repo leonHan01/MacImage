@@ -157,111 +157,188 @@
                 <button class="modal-close" id="settingsClose">&times;</button>
             </div>
             <div class="settings-body">
-                <div class="settings-section">
-                    <h3>回收站文件夹</h3>
-                    <p class="settings-hint">删除的图片将移动到此文件夹</p>
-                    <div id="trashFolderDisplay" class="trash-folder-display"></div>
-                    <div class="trash-info-row">
-                        <div id="trashInfo" class="trash-info"></div>
-                        <button id="emptyTrashBtn" class="danger-btn" disabled>清空回收站</button>
+                <div class="settings-sidebar">
+                    <div class="settings-nav-item active" data-section="trash">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                        <span>回收站</span>
+                    </div>
+                    <div class="settings-nav-item" data-section="security">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                        <span>安全设置</span>
+                    </div>
+                    <div class="settings-nav-item" data-section="category">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <span>分类管理</span>
+                    </div>
+                    <div class="settings-nav-item" data-section="tags">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                            <line x1="7" y1="7" x2="7.01" y2="7"></line>
+                        </svg>
+                        <span>标签管理</span>
+                    </div>
+                    <div class="settings-nav-item" data-section="data">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        <span>数据管理</span>
                     </div>
                 </div>
-                
-                <div class="settings-section">
-                    <h3>安全设置</h3>
-                    <p class="settings-hint">修改密码和自动锁定时间</p>
+                <div class="settings-main">
+                    <div id="settingsTrash" class="settings-panel active">
+                        <h3>回收站文件夹</h3>
+                        <p class="settings-hint">删除的图片将移动到此文件夹</p>
+                        <div id="trashFolderDisplay" class="trash-folder-display"></div>
+                        <div class="trash-info-row">
+                            <div id="trashInfo" class="trash-info"></div>
+                            <button id="emptyTrashBtn" class="danger-btn" disabled>清空回收站</button>
+                        </div>
+                    </div>
                     
-                    <div class="password-change-form">
-                        <input type="password" id="currentPassword" class="settings-input" placeholder="当前密码">
-                        <input type="password" id="newPassword" class="settings-input" placeholder="新密码">
-                        <input type="password" id="confirmPassword" class="settings-input" placeholder="确认新密码">
-                        <p id="passwordChangeError" class="settings-error"></p>
-                        <button id="changePasswordBtn" class="primary-btn">修改密码</button>
+                    <div id="settingsSecurity" class="settings-panel">
+                        <h3>安全设置</h3>
+                        <p class="settings-hint">修改密码和自动锁定时间</p>
+                        
+                        <div class="password-change-form">
+                            <input type="password" id="currentPassword" class="settings-input" placeholder="当前密码">
+                            <input type="password" id="newPassword" class="settings-input" placeholder="新密码">
+                            <input type="password" id="confirmPassword" class="settings-input" placeholder="确认新密码">
+                            <p id="passwordChangeError" class="settings-error"></p>
+                            <button id="changePasswordBtn" class="primary-btn">修改密码</button>
+                        </div>
+                        
+                        <div class="timeout-setting">
+                            <label>无操作自动锁定：</label>
+                            <select id="lockTimeoutSelect" class="settings-select">
+                                <option value="1">1 分钟</option>
+                                <option value="3">3 分钟</option>
+                                <option value="5" selected>5 分钟</option>
+                                <option value="10">10 分钟</option>
+                                <option value="15">15 分钟</option>
+                                <option value="30">30 分钟</option>
+                            </select>
+                        </div>
                     </div>
                     
-                    <div class="timeout-setting">
-                        <label>无操作自动锁定：</label>
-                        <select id="lockTimeoutSelect" class="settings-select">
-                            <option value="1">1 分钟</option>
-                            <option value="3">3 分钟</option>
-                            <option value="5" selected>5 分钟</option>
-                            <option value="10">10 分钟</option>
-                            <option value="15">15 分钟</option>
-                            <option value="30">30 分钟</option>
-                        </select>
+                    <div id="settingsCategory" class="settings-panel">
+                        <h3>分类管理</h3>
+                        <p class="settings-hint">管理标签分类，可添加、编辑、删除分类</p>
+                        <div class="add-category-form">
+                            <input type="text" id="newCategoryName" placeholder="分类名称" maxlength="20">
+                            <select id="newCategoryIcon" class="icon-select" title="选择图标">
+                                <option value="📌">📌 图钉</option>
+                                <option value="👤">👤 人物</option>
+                                <option value="👥">👥 群组</option>
+                                <option value="🏞️">🏞️ 风景</option>
+                                <option value="🏔️">🏔️ 山峰</option>
+                                <option value="🌊">🌊 海浪</option>
+                                <option value="🌳">🌳 树木</option>
+                                <option value="📦">📦 包裹</option>
+                                <option value="📱">📱 手机</option>
+                                <option value="💻">💻 电脑</option>
+                                <option value="📷">📷 相机</option>
+                                <option value="🚗">🚗 汽车</option>
+                                <option value="🏠">🏠 房屋</option>
+                                <option value="📅">📅 日历</option>
+                                <option value="🎉">🎉 庆祝</option>
+                                <option value="🎂">🎂 生日</option>
+                                <option value="🎄">🎄 圣诞</option>
+                                <option value="❤️">❤️ 红心</option>
+                                <option value="💖">💖 爱心</option>
+                                <option value="⭐">⭐ 星星</option>
+                                <option value="🔥">🔥 火焰</option>
+                                <option value="🎨">🎨 调色板</option>
+                                <option value="🖼️">🖼️ 画框</option>
+                                <option value="🎬">🎬 电影</option>
+                                <option value="🎵">🎵 音乐</option>
+                                <option value="📚">📚 书籍</option>
+                                <option value="💼">💼 公文包</option>
+                                <option value="🎮">🎮 游戏</option>
+                                <option value="🏀">🏀 篮球</option>
+                                <option value="⚽">⚽ 足球</option>
+                                <option value="🍳">🍳 烹饪</option>
+                                <option value="☕">☕ 咖啡</option>
+                                <option value="🍕">🍕 披萨</option>
+                                <option value="✈️">✈️ 飞机</option>
+                                <option value="🌍">🌍 地球</option>
+                                <option value="☀️">☀️ 太阳</option>
+                                <option value="🌙">🌙 月亮</option>
+                                <option value="💎">💎 钻石</option>
+                                <option value="🔑">🔑 钥匙</option>
+                                <option value="💡">💡 灯泡</option>
+                            </select>
+                            <button id="addCategoryBtn" class="primary-btn">添加</button>
+                        </div>
+                        <div class="category-list" id="categoryList">
+                        </div>
                     </div>
-                </div>
-                
-                <div class="settings-section">
-                    <h3>分类管理</h3>
-                    <p class="settings-hint">管理标签分类，可添加、编辑、删除分类</p>
-                    <div class="add-category-form">
-                        <input type="text" id="newCategoryName" placeholder="分类名称" maxlength="20">
-                        <select id="newCategoryIcon" class="icon-select" title="选择图标">
-                            <option value="📌">📌 图钉</option>
-                            <option value="👤">👤 人物</option>
-                            <option value="👥">👥 群组</option>
-                            <option value="🏞️">🏞️ 风景</option>
-                            <option value="🏔️">🏔️ 山峰</option>
-                            <option value="🌊">🌊 海浪</option>
-                            <option value="🌳">🌳 树木</option>
-                            <option value="📦">📦 包裹</option>
-                            <option value="📱">📱 手机</option>
-                            <option value="💻">💻 电脑</option>
-                            <option value="📷">📷 相机</option>
-                            <option value="🚗">🚗 汽车</option>
-                            <option value="🏠">🏠 房屋</option>
-                            <option value="📅">📅 日历</option>
-                            <option value="🎉">🎉 庆祝</option>
-                            <option value="🎂">🎂 生日</option>
-                            <option value="🎄">🎄 圣诞</option>
-                            <option value="❤️">❤️ 红心</option>
-                            <option value="💖">💖 爱心</option>
-                            <option value="⭐">⭐ 星星</option>
-                            <option value="🔥">🔥 火焰</option>
-                            <option value="🎨">🎨 调色板</option>
-                            <option value="🖼️">🖼️ 画框</option>
-                            <option value="🎬">🎬 电影</option>
-                            <option value="🎵">🎵 音乐</option>
-                            <option value="📚">📚 书籍</option>
-                            <option value="💼">💼 公文包</option>
-                            <option value="🎮">🎮 游戏</option>
-                            <option value="🏀">🏀 篮球</option>
-                            <option value="⚽">⚽ 足球</option>
-                            <option value="🍳">🍳 烹饪</option>
-                            <option value="☕">☕ 咖啡</option>
-                            <option value="🍕">🍕 披萨</option>
-                            <option value="✈️">✈️ 飞机</option>
-                            <option value="🌍">🌍 地球</option>
-                            <option value="☀️">☀️ 太阳</option>
-                            <option value="🌙">🌙 月亮</option>
-                            <option value="💎">💎 钻石</option>
-                            <option value="🔑">🔑 钥匙</option>
-                            <option value="💡">💡 灯泡</option>
-                        </select>
-                        <button id="addCategoryBtn" class="primary-btn">添加</button>
+                    
+                    <div id="settingsTags" class="settings-panel">
+                        <h3>标签管理</h3>
+                        <p class="settings-hint">添加、编辑、删除标签</p>
+                        <div class="add-tag-form">
+                            <input type="text" id="newTagInput" placeholder="输入新标签名称" maxlength="20">
+                            <select id="newTagCategory" class="tag-category-select" title="选择类别">
+                                <option value="person">👤 人物</option>
+                                <option value="landscape">🏞️ 风景</option>
+                                <option value="object">📦 物品</option>
+                                <option value="event">📅 事件</option>
+                                <option value="emotion">❤️ 情感</option>
+                                <option value="style">🎨 风格</option>
+                                <option value="other" selected>📌 其他</option>
+                            </select>
+                            <button id="addTagBtn" class="primary-btn">添加</button>
+                        </div>
+                        <div class="tag-list" id="tagList">
+                            <div class="empty-state">暂无标签</div>
+                        </div>
                     </div>
-                    <div class="category-list" id="categoryList">
-                    </div>
-                </div>
-                
-                <div class="settings-section">
-                    <h3>标签管理</h3>
-                    <div class="add-tag-form">
-                        <input type="text" id="newTagInput" placeholder="输入新标签名称" maxlength="20">
-                        <select id="newTagCategory" class="tag-category-select" title="选择类别">
-                            <option value="person">👤 人物</option>
-                            <option value="landscape">🏞️ 风景</option>
-                            <option value="object">📦 物品</option>
-                            <option value="event">📅 事件</option>
-                            <option value="emotion">❤️ 情感</option>
-                            <option value="style">🎨 风格</option>
-                            <option value="other" selected>📌 其他</option>
-                        </select>
-                        <button id="addTagBtn" class="primary-btn">添加</button>
-                    </div>
-                    <div class="tag-list" id="tagList">
-                        <div class="empty-state">暂无标签</div>
+                    
+                    <div id="settingsData" class="settings-panel">
+                        <h3>数据管理</h3>
+                        <p class="settings-hint">导入或导出标签和分类配置</p>
+                        
+                        <div class="data-management-section">
+                            <div class="data-action-card">
+                                <div class="data-action-icon">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="17 8 12 3 7 8"></polyline>
+                                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                                    </svg>
+                                </div>
+                                <div class="data-action-content">
+                                    <h4>导出配置</h4>
+                                    <p>将当前标签和分类配置导出为 JSON 文件，可用于备份或分享</p>
+                                </div>
+                                <button id="exportConfigBtn" class="primary-btn">导出</button>
+                            </div>
+                            
+                            <div class="data-action-card">
+                                <div class="data-action-icon">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                </div>
+                                <div class="data-action-content">
+                                    <h4>导入配置</h4>
+                                    <p>从 JSON 文件导入标签和分类配置，将覆盖当前设置</p>
+                                </div>
+                                <button id="importConfigBtn" class="secondary-btn">导入</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
