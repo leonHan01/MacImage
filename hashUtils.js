@@ -27,13 +27,16 @@ function calculateFileHash(filePath) {
 
 function calculateFileHashSync(filePath) {
     const fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(HASH_CHUNK_SIZE);
-    const bytesRead = fs.readSync(fd, buffer, 0, HASH_CHUNK_SIZE, 0);
-    fs.closeSync(fd);
-    
-    const hash = crypto.createHash('md5');
-    hash.update(buffer.slice(0, bytesRead));
-    return hash.digest('hex');
+    try {
+        const buffer = Buffer.alloc(HASH_CHUNK_SIZE);
+        const bytesRead = fs.readSync(fd, buffer, 0, HASH_CHUNK_SIZE, 0);
+        
+        const hash = crypto.createHash('md5');
+        hash.update(buffer.slice(0, bytesRead));
+        return hash.digest('hex');
+    } finally {
+        fs.closeSync(fd);
+    }
 }
 
 module.exports = {

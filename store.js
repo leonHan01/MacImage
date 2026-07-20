@@ -40,6 +40,11 @@ class Store {
         this.save();
     }
 
+    setMany(values) {
+        this.data = { ...this.data, ...values };
+        this.save();
+    }
+
     delete(key) {
         delete this.data[key];
         this.save();

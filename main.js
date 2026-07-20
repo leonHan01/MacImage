@@ -1,15 +1,252 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('./store');
-const { calculateFileHashSync } = require('./hashUtils');
+const { calculateFileHash, calculateFileHashSync } = require('./hashUtils');
+const registerIpcHandlers = require('./main-ipc-handlers');
+
+const fsp = fs.promises;
 
 let mainWindow;
 let store;
+let pendingOpenImages = [];
+let rendererReady = false;
 
 const storePath = path.join(app.getPath('userData'), 'config.json');
+const thumbnailCacheDir = path.join(app.getPath('userData'), 'thumbnails');
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.heic', '.heif'];
+const IMAGE_SCAN_CONCURRENCY = 8;
+const DEFAULT_THUMBNAIL_SIZE = 220;
+
+function isSupportedImageFile(filePath) {
+    return IMAGE_EXTENSIONS.includes(path.extname(filePath).toLowerCase());
+}
+
+async function pathExists(filePath) {
+    try {
+        await fsp.access(filePath);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function getImageEntries(dirPath) {
+    const entries = await fsp.readdir(dirPath, { withFileTypes: true });
+    return entries.filter(entry => (
+        entry.isFile() &&
+        !entry.name.startsWith('.') &&
+        isSupportedImageFile(entry.name)
+    ));
+}
+
+async function getImageRecord(dirPath, fileName, pathToHash, imageTagsByHash, imageScoresByHash, updatedPathToHash) {
+    const fullPath = path.join(dirPath, fileName);
+
+    try {
+        const stats = await fsp.stat(fullPath);
+        let hash = pathToHash[fullPath];
+
+        if (!hash) {
+            hash = await calculateFileHash(fullPath);
+        }
+
+        if (hash) {
+            updatedPathToHash[fullPath] = hash;
+        }
+
+        return {
+            name: fileName,
+            path: fullPath,
+            size: stats.size,
+            modifiedTime: stats.mtime,
+            hash,
+            tags: hash ? (imageTagsByHash[hash] || []) : [],
+            score: hash ? (imageScoresByHash[hash] ?? null) : null
+        };
+    } catch (err) {
+        console.error('Failed to read image:', fullPath, err.message);
+        return null;
+    }
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+    const results = [];
+    let nextIndex = 0;
+
+    async function worker() {
+        while (nextIndex < items.length) {
+            const currentIndex = nextIndex++;
+            results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+        }
+    }
+
+    const workerCount = Math.min(concurrency, items.length);
+    await Promise.all(Array.from({ length: workerCount }, worker));
+    return results;
+}
+
+async function getOrCreateImageHash(imagePath) {
+    const pathToHash = store.get('pathToHash') || {};
+    let hash = pathToHash[imagePath];
+
+    if (!hash) {
+        hash = await calculateFileHash(imagePath);
+        pathToHash[imagePath] = hash;
+        store.set('pathToHash', pathToHash);
+    }
+
+    return hash;
+}
+
+function normalizeThumbnailSize(size) {
+    const parsed = Number(size);
+    if (!Number.isFinite(parsed)) {
+        return DEFAULT_THUMBNAIL_SIZE;
+    }
+    return Math.min(Math.max(Math.round(parsed), 80), 512);
+}
+
+function getThumbnailCachePath(hash, size) {
+    return path.join(thumbnailCacheDir, `${hash}-${size}.png`);
+}
+
+async function readThumbnailDataUrl(cachePath) {
+    const buffer = await fsp.readFile(cachePath);
+    return `data:image/png;base64,${buffer.toString('base64')}`;
+}
+
+async function getCachedThumbnail(imagePath, requestedSize = DEFAULT_THUMBNAIL_SIZE) {
+    const size = normalizeThumbnailSize(requestedSize);
+    const hash = await getOrCreateImageHash(imagePath);
+    if (!hash) {
+        return { success: false, error: '无法计算图片 hash' };
+    }
+
+    const cachePath = getThumbnailCachePath(hash, size);
+    if (await pathExists(cachePath)) {
+        return { success: true, dataUrl: await readThumbnailDataUrl(cachePath), cached: true };
+    }
+
+    await fsp.mkdir(thumbnailCacheDir, { recursive: true });
+    const thumbnail = await nativeImage.createThumbnailFromPath(imagePath, {
+        width: size,
+        height: size
+    });
+
+    if (!thumbnail || thumbnail.isEmpty()) {
+        return { success: false, error: '无法生成缩略图' };
+    }
+
+    const png = thumbnail.toPNG();
+    await fsp.writeFile(cachePath, png);
+    return { success: true, dataUrl: `data:image/png;base64,${png.toString('base64')}`, cached: false };
+}
+
+async function getAvailablePath(filePath, buildCandidate) {
+    if (!(await pathExists(filePath))) {
+        return filePath;
+    }
+
+    let counter = 1;
+    let candidate = buildCandidate(counter);
+    while (await pathExists(candidate)) {
+        counter++;
+        candidate = buildCandidate(counter);
+    }
+    return candidate;
+}
+
+async function getTimestampedPath(filePath) {
+    return getAvailablePath(filePath, () => {
+        const ext = path.extname(filePath);
+        const baseName = path.basename(filePath, ext);
+        return path.join(path.dirname(filePath), `${baseName}_${Date.now()}${ext}`);
+    });
+}
+
+async function getNumberedPath(filePath) {
+    return getAvailablePath(filePath, (counter) => {
+        const ext = path.extname(filePath);
+        const baseName = path.basename(filePath, ext);
+        return path.join(path.dirname(filePath), `${baseName}_${counter}${ext}`);
+    });
+}
+
+function moveHashMapping(fromPath, toPath) {
+    const pathToHash = store.get('pathToHash') || {};
+    const hash = pathToHash[fromPath];
+    if (!hash) return;
+
+    delete pathToHash[fromPath];
+    pathToHash[toPath] = hash;
+    store.set('pathToHash', pathToHash);
+}
+
+function flushPendingOpenImages() {
+    if (!rendererReady || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoadingMainFrame()) {
+        return;
+    }
+
+    const imagesToOpen = pendingOpenImages;
+    pendingOpenImages = [];
+
+    imagesToOpen.forEach((filePath) => {
+        mainWindow.webContents.send('open-image-file', {
+            filePath,
+            folderPath: path.dirname(filePath)
+        });
+    });
+
+    if (imagesToOpen.length > 0) {
+        if (mainWindow.isMinimized()) {
+            mainWindow.restore();
+        }
+        mainWindow.focus();
+    }
+}
+
+function openImageFromSystem(filePath) {
+    if (!isSupportedImageFile(filePath) || !fs.existsSync(filePath)) {
+        return;
+    }
+
+    pendingOpenImages.push(filePath);
+
+    if (app.isReady() && (!mainWindow || mainWindow.isDestroyed())) {
+        createWindow();
+    }
+
+    flushPendingOpenImages();
+}
+
+function getImageFilesFromArgv(argv) {
+    return argv.filter((arg) => {
+        const filePath = path.resolve(arg);
+        return isSupportedImageFile(filePath) && fs.existsSync(filePath);
+    });
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+    app.quit();
+} else {
+    app.on('second-instance', (event, argv) => {
+        getImageFilesFromArgv(argv).forEach(openImageFromSystem);
+
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) {
+                mainWindow.restore();
+            }
+            mainWindow.focus();
+        }
+    });
+}
 
 function createWindow() {
+    rendererReady = false;
+
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
@@ -27,80 +264,97 @@ function createWindow() {
     });
 
     mainWindow.loadFile('index.html');
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
 
     createMenu();
 }
 
 function createMenu() {
-    const template = [
-        {
-            label: '文件',
-            submenu: [
-                {
-                    label: '打开文件夹',
-                    accelerator: 'Cmd+O',
-                    click: async () => {
-                        const result = await dialog.showOpenDialog(mainWindow, {
-                            properties: ['openDirectory']
-                        });
-                        if (!result.canceled && result.filePaths.length > 0) {
-                            mainWindow.webContents.send('open-folder', result.filePaths[0]);
-                        }
-                    }
-                },
-                {
-                    label: '设置回收站文件夹',
-                    click: async () => {
-                        const result = await dialog.showOpenDialog(mainWindow, {
-                            properties: ['openDirectory', 'createDirectory']
-                        });
-                        if (!result.canceled && result.filePaths.length > 0) {
-                            store.set('trashFolder', result.filePaths[0]);
-                            mainWindow.webContents.send('trash-folder-changed', result.filePaths[0]);
-                        }
-                    }
-                },
-                { type: 'separator' },
-                { role: 'quit', label: '退出' }
-            ]
-        },
-        {
-            label: '编辑',
-            submenu: [
-                {
-                    label: '撤销删除',
-                    accelerator: 'Cmd+Z',
-                    click: () => {
-                        mainWindow.webContents.send('undo-delete');
-                    }
-                }
-            ]
-        },
-        {
-            label: '视图',
-            submenu: [
-                { role: 'reload', label: '重新加载' },
-                { role: 'toggleDevTools', label: '开发者工具' },
-                { type: 'separator' },
-                { role: 'resetZoom', label: '重置缩放' },
-                { role: 'zoomIn', label: '放大' },
-                { role: 'zoomOut', label: '缩小' },
-                { type: 'separator' },
-                { role: 'togglefullscreen', label: '全屏' }
-            ]
-        },
-        {
-            label: '窗口',
-            submenu: [
-                { role: 'minimize', label: '最小化' },
-                { role: 'close', label: '关闭' }
-            ]
-        }
-    ];
-
-    const menu = Menu.buildFromTemplate(template);
+    const menu = Menu.buildFromTemplate([
+        createFileMenu(),
+        createEditMenu(),
+        createViewMenu(),
+        createWindowMenu()
+    ]);
     Menu.setApplicationMenu(menu);
 }
+
+function createFileMenu() {
+    return {
+        label: '文件',
+        submenu: [
+            { label: '打开文件夹', accelerator: 'Cmd+O', click: openFolderFromMenu },
+            { label: '设置回收站文件夹', click: setTrashFolderFromMenu },
+            { type: 'separator' },
+            { role: 'quit', label: '退出' }
+        ]
+    };
+}
+
+function createEditMenu() {
+    return {
+        label: '编辑',
+        submenu: [
+            {
+                label: '撤销删除',
+                accelerator: 'Cmd+Z',
+                click: () => mainWindow.webContents.send('undo-delete')
+            }
+        ]
+    };
+}
+
+function createViewMenu() {
+    return {
+        label: '视图',
+        submenu: [
+            { role: 'reload', label: '重新加载' },
+            { role: 'toggleDevTools', label: '开发者工具' },
+            { type: 'separator' },
+            { role: 'resetZoom', label: '重置缩放' },
+            { role: 'zoomIn', label: '放大' },
+            { role: 'zoomOut', label: '缩小' },
+            { type: 'separator' },
+            { role: 'togglefullscreen', label: '全屏' }
+        ]
+    };
+}
+
+function createWindowMenu() {
+    return {
+        label: '窗口',
+        submenu: [
+            { role: 'minimize', label: '最小化' },
+            { role: 'close', label: '关闭' }
+        ]
+    };
+}
+
+async function openFolderFromMenu() {
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openDirectory']
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+        mainWindow.webContents.send('open-folder', result.filePaths[0]);
+    }
+}
+
+async function setTrashFolderFromMenu() {
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openDirectory', 'createDirectory']
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+        store.set('trashFolder', result.filePaths[0]);
+        mainWindow.webContents.send('trash-folder-changed', result.filePaths[0]);
+    }
+}
+
+app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    openImageFromSystem(filePath);
+});
 
 function migrateOldData() {
     const oldImageTags = store.get('imageTags');
@@ -130,10 +384,37 @@ function migrateOldData() {
     }
 }
 
+registerIpcHandlers({
+    ipcMain,
+    dialog,
+    shell,
+    path,
+    fsp,
+    getMainWindow: () => mainWindow,
+    getStore: () => store,
+    getImageEntries,
+    getImageRecord,
+    mapWithConcurrency,
+    getOrCreateImageHash,
+    getCachedThumbnail,
+    getAvailablePath,
+    getTimestampedPath,
+    getNumberedPath,
+    pathExists,
+    moveHashMapping,
+    imageScanConcurrency: IMAGE_SCAN_CONCURRENCY,
+    getServerDownloadDirectory: () => path.join(app.getPath('userData'), 'server-downloads')
+});
+
 app.whenReady().then(() => {
+    if (!gotSingleInstanceLock) {
+        return;
+    }
+
     store = new Store(storePath);
     migrateOldData();
     createWindow();
+    getImageFilesFromArgv(process.argv).forEach(openImageFromSystem);
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
@@ -148,434 +429,8 @@ app.on('window-all-closed', () => {
     }
 });
 
-ipcMain.handle('open-folder-dialog', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-        properties: ['openDirectory']
-    });
-    if (!result.canceled && result.filePaths.length > 0) {
-        return result.filePaths[0];
-    }
-    return null;
-});
-
-ipcMain.handle('open-trash-folder-dialog', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-        properties: ['openDirectory', 'createDirectory']
-    });
-    if (!result.canceled && result.filePaths.length > 0) {
-        store.set('trashFolder', result.filePaths[0]);
-        return result.filePaths[0];
-    }
-    return null;
-});
-
-ipcMain.handle('get-trash-folder', () => {
-    return store.get('trashFolder') || null;
-});
-
-ipcMain.handle('set-trash-folder', (event, folderPath) => {
-    store.set('trashFolder', folderPath);
+ipcMain.handle('renderer-ready', () => {
+    rendererReady = true;
+    flushPendingOpenImages();
     return true;
-});
-
-ipcMain.handle('read-directory', async (event, dirPath) => {
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.heic', '.heif'];
-    const images = [];
-    const pathToHash = store.get('pathToHash') || {};
-    const imageTagsByHash = store.get('imageTagsByHash') || {};
-    const updatedPathToHash = {};
-    
-    try {
-        const files = fs.readdirSync(dirPath);
-        
-        for (const file of files) {
-            const ext = path.extname(file).toLowerCase();
-            if (imageExtensions.includes(ext)) {
-                const fullPath = path.join(dirPath, file);
-                const stats = fs.statSync(fullPath);
-                
-                let hash = pathToHash[fullPath];
-                let needsHashCalc = !hash;
-                
-                if (needsHashCalc) {
-                    try {
-                        hash = calculateFileHashSync(fullPath);
-                    } catch (err) {
-                        console.error('Failed to calculate hash for:', fullPath, err.message);
-                        hash = null;
-                    }
-                }
-                
-                if (hash) {
-                    updatedPathToHash[fullPath] = hash;
-                }
-                
-                const tags = hash ? (imageTagsByHash[hash] || []) : [];
-                
-                images.push({
-                    name: file,
-                    path: fullPath,
-                    size: stats.size,
-                    modifiedTime: stats.mtime,
-                    hash: hash,
-                    tags: tags
-                });
-            }
-        }
-        
-        store.set('pathToHash', { ...pathToHash, ...updatedPathToHash });
-        
-        return images;
-    } catch (error) {
-        console.error('Error reading directory:', error);
-        return [];
-    }
-});
-
-ipcMain.handle('get-tags', () => {
-    return store.get('tags') || [];
-});
-
-ipcMain.handle('save-tags', (event, tags) => {
-    store.set('tags', tags);
-    return true;
-});
-
-ipcMain.handle('get-image-tags', () => {
-    return {
-        imageTagsByHash: store.get('imageTagsByHash') || {},
-        pathToHash: store.get('pathToHash') || {}
-    };
-});
-
-ipcMain.handle('save-image-tags', (event, data) => {
-    if (data.imageTagsByHash) {
-        store.set('imageTagsByHash', data.imageTagsByHash);
-    }
-    if (data.pathToHash) {
-        store.set('pathToHash', data.pathToHash);
-    }
-    return true;
-});
-
-ipcMain.handle('get-image-hash', (event, imagePath) => {
-    try {
-        const hash = calculateFileHashSync(imagePath);
-        const pathToHash = store.get('pathToHash') || {};
-        pathToHash[imagePath] = hash;
-        store.set('pathToHash', pathToHash);
-        return hash;
-    } catch (err) {
-        console.error('Failed to calculate hash:', err.message);
-        return null;
-    }
-});
-
-ipcMain.handle('add-tag-to-image', async (event, imagePath, tag) => {
-    const pathToHash = store.get('pathToHash') || {};
-    const imageTagsByHash = store.get('imageTagsByHash') || {};
-    
-    let hash = pathToHash[imagePath];
-    if (!hash) {
-        try {
-            hash = calculateFileHashSync(imagePath);
-            pathToHash[imagePath] = hash;
-            store.set('pathToHash', pathToHash);
-        } catch (err) {
-            console.error('Failed to calculate hash:', err.message);
-            return [];
-        }
-    }
-    
-    if (!imageTagsByHash[hash]) {
-        imageTagsByHash[hash] = [];
-    }
-    if (!imageTagsByHash[hash].includes(tag)) {
-        imageTagsByHash[hash].push(tag);
-    }
-    store.set('imageTagsByHash', imageTagsByHash);
-    
-    return imageTagsByHash[hash];
-});
-
-ipcMain.handle('remove-tag-from-image', (event, imagePath, tag) => {
-    const pathToHash = store.get('pathToHash') || {};
-    const imageTagsByHash = store.get('imageTagsByHash') || {};
-    
-    const hash = pathToHash[imagePath];
-    if (!hash) {
-        return [];
-    }
-    
-    if (imageTagsByHash[hash]) {
-        imageTagsByHash[hash] = imageTagsByHash[hash].filter(t => t !== tag);
-        if (imageTagsByHash[hash].length === 0) {
-            delete imageTagsByHash[hash];
-        }
-        store.set('imageTagsByHash', imageTagsByHash);
-    }
-    
-    return imageTagsByHash[hash] || [];
-});
-
-ipcMain.handle('delete-image', async (event, imagePath) => {
-    const trashFolder = store.get('trashFolder');
-    
-    if (!trashFolder) {
-        return { success: false, error: '未设置回收站文件夹' };
-    }
-
-    try {
-        if (!fs.existsSync(trashFolder)) {
-            fs.mkdirSync(trashFolder, { recursive: true });
-        }
-
-        const fileName = path.basename(imagePath);
-        let destPath = path.join(trashFolder, fileName);
-        
-        if (fs.existsSync(destPath)) {
-            const ext = path.extname(fileName);
-            const baseName = path.basename(fileName, ext);
-            const timestamp = Date.now();
-            destPath = path.join(trashFolder, `${baseName}_${timestamp}${ext}`);
-        }
-
-        fs.renameSync(imagePath, destPath);
-
-        const pathToHash = store.get('pathToHash') || {};
-        const hash = pathToHash[imagePath];
-        if (hash) {
-            delete pathToHash[imagePath];
-            pathToHash[destPath] = hash;
-            store.set('pathToHash', pathToHash);
-        }
-
-        return { 
-            success: true, 
-            originalPath: imagePath, 
-            trashPath: destPath,
-            fileName: fileName
-        };
-    } catch (error) {
-        console.error('Error deleting image:', error);
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('undo-delete', async (event, trashPath, originalPath) => {
-    try {
-        if (!fs.existsSync(trashPath)) {
-            return { success: false, error: '回收站中找不到该文件' };
-        }
-
-        const originalDir = path.dirname(originalPath);
-        if (!fs.existsSync(originalDir)) {
-            return { success: false, error: '原始目录不存在' };
-        }
-
-        let restorePath = originalPath;
-        if (fs.existsSync(originalPath)) {
-            const ext = path.extname(originalPath);
-            const baseName = path.basename(originalPath, ext);
-            const timestamp = Date.now();
-            restorePath = path.join(originalDir, `${baseName}_restored_${timestamp}${ext}`);
-        }
-
-        fs.renameSync(trashPath, restorePath);
-
-        const pathToHash = store.get('pathToHash') || {};
-        const hash = pathToHash[trashPath];
-        if (hash) {
-            delete pathToHash[trashPath];
-            pathToHash[restorePath] = hash;
-            store.set('pathToHash', pathToHash);
-        }
-
-        return { 
-            success: true, 
-            restoredPath: restorePath,
-            originalPath: originalPath
-        };
-    } catch (error) {
-        console.error('Error undoing delete:', error);
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('show-in-folder', (event, filePath) => {
-    const { shell } = require('electron');
-    shell.showItemInFolder(filePath);
-    return true;
-});
-
-ipcMain.handle('get-password', () => {
-    return store.get('password') || 'hanqi452+1s';
-});
-
-ipcMain.handle('set-password', (event, newPassword) => {
-    store.set('password', newPassword);
-    return true;
-});
-
-ipcMain.handle('verify-password', (event, inputPassword) => {
-    const savedPassword = store.get('password') || 'hanqi452+1s';
-    return inputPassword === savedPassword;
-});
-
-ipcMain.handle('get-timeout', () => {
-    return store.get('lockTimeout') || 5;
-});
-
-ipcMain.handle('set-timeout', (event, timeout) => {
-    store.set('lockTimeout', timeout);
-    return true;
-});
-
-ipcMain.handle('get-categories', () => {
-    return store.get('categories') || null;
-});
-
-ipcMain.handle('save-categories', (event, categories) => {
-    store.set('categories', categories);
-    return true;
-});
-
-ipcMain.handle('get-trash-info', async () => {
-    const trashFolder = store.get('trashFolder');
-    
-    if (!trashFolder || !fs.existsSync(trashFolder)) {
-        return { count: 0, size: 0, path: trashFolder };
-    }
-    
-    try {
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.heic', '.heif'];
-        let count = 0;
-        let totalSize = 0;
-        
-        const files = fs.readdirSync(trashFolder);
-        for (const file of files) {
-            const ext = path.extname(file).toLowerCase();
-            if (imageExtensions.includes(ext)) {
-                const filePath = path.join(trashFolder, file);
-                const stats = fs.statSync(filePath);
-                count++;
-                totalSize += stats.size;
-            }
-        }
-        
-        return { count, size: totalSize, path: trashFolder };
-    } catch (error) {
-        console.error('Error getting trash info:', error);
-        return { count: 0, size: 0, path: trashFolder };
-    }
-});
-
-ipcMain.handle('empty-trash', async () => {
-    const trashFolder = store.get('trashFolder');
-    
-    if (!trashFolder || !fs.existsSync(trashFolder)) {
-        return { success: false, error: '回收站文件夹不存在' };
-    }
-    
-    try {
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.heic', '.heif'];
-        const files = fs.readdirSync(trashFolder);
-        let deletedCount = 0;
-        
-        for (const file of files) {
-            const ext = path.extname(file).toLowerCase();
-            if (imageExtensions.includes(ext)) {
-                const filePath = path.join(trashFolder, file);
-                fs.unlinkSync(filePath);
-                deletedCount++;
-            }
-        }
-        
-        return { success: true, deletedCount };
-    } catch (error) {
-        console.error('Error emptying trash:', error);
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('export-config', async () => {
-    try {
-        const config = {
-            tags: store.get('tags') || [],
-            categories: store.get('categories') || null,
-            exportTime: new Date().toISOString(),
-            version: '1.0'
-        };
-        return { success: true, config };
-    } catch (error) {
-        console.error('Error exporting config:', error);
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('import-config', async (event, config) => {
-    try {
-        if (!config || typeof config !== 'object') {
-            return { success: false, error: '无效的配置数据' };
-        }
-        
-        if (config.tags && Array.isArray(config.tags)) {
-            store.set('tags', config.tags);
-        }
-        
-        if (config.categories && Array.isArray(config.categories)) {
-            store.set('categories', config.categories);
-        }
-        
-        return { success: true };
-    } catch (error) {
-        console.error('Error importing config:', error);
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('save-export-file', async (event, config) => {
-    try {
-        const { filePath } = await dialog.showSaveDialog(mainWindow, {
-            title: '导出配置',
-            defaultPath: `macimage-config-${Date.now()}.json`,
-            filters: [
-                { name: 'JSON', extensions: ['json'] }
-            ]
-        });
-        
-        if (!filePath) {
-            return { success: false, cancelled: true };
-        }
-        
-        fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf-8');
-        return { success: true, filePath };
-    } catch (error) {
-        console.error('Error saving export file:', error);
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('open-import-file', async () => {
-    try {
-        const { filePaths } = await dialog.showOpenDialog(mainWindow, {
-            title: '导入配置',
-            filters: [
-                { name: 'JSON', extensions: ['json'] }
-            ],
-            properties: ['openFile']
-        });
-        
-        if (!filePaths || filePaths.length === 0) {
-            return { success: false, cancelled: true };
-        }
-        
-        const content = fs.readFileSync(filePaths[0], 'utf-8');
-        const config = JSON.parse(content);
-        
-        return { success: true, config };
-    } catch (error) {
-        console.error('Error opening import file:', error);
-        return { success: false, error: error.message };
-    }
 });

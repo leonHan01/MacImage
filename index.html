@@ -6,24 +6,15 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
     <title>MacImage - 图片浏览器</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles-gallery.css">
+    <link rel="stylesheet" href="styles-modal.css">
+    <link rel="stylesheet" href="styles-competition.css">
+    <link rel="stylesheet" href="styles-settings.css">
+    <link rel="stylesheet" href="styles-tags.css">
+    <link rel="stylesheet" href="styles-category.css">
+    <link rel="stylesheet" href="styles-duplicates-data.css">
 </head>
 <body>
-    <div id="lockScreen" class="lock-screen">
-        <div class="lock-content">
-            <div class="lock-icon">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                </svg>
-            </div>
-            <h2>MacImage</h2>
-            <p class="lock-hint">请输入密码解锁</p>
-            <input type="password" id="passwordInput" class="lock-input" placeholder="密码" autofocus>
-            <p id="passwordError" class="lock-error">密码错误，请重试</p>
-            <button id="unlockBtn" class="lock-btn">解锁</button>
-        </div>
-    </div>
-
     <div class="app-container">
         <aside class="sidebar">
             <div class="sidebar-header">
@@ -57,6 +48,15 @@
                 <div class="empty-state">请先添加标签</div>
             </div>
             <div class="sidebar-footer">
+                <div class="quick-open-folder">
+                    <label for="quickFolderSelect">快速打开</label>
+                    <div class="quick-open-controls">
+                        <select id="quickFolderSelect" class="quick-folder-select"></select>
+                        <button id="quickOpenFolderBtn" class="secondary-btn" title="打开快捷文件夹">
+                            打开
+                        </button>
+                    </div>
+                </div>
                 <button id="openFolderBtn" class="primary-btn">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -68,8 +68,64 @@
         
         <main class="main-content">
             <div class="toolbar">
-                <div class="current-folder" id="currentFolder"></div>
-                <div class="image-count" id="imageCount"></div>
+                <div class="current-folder-group">
+                    <div class="current-folder" id="currentFolder"></div>
+                    <button id="openCurrentFolderBtn" class="toolbar-icon-btn" title="在 Finder 中打开当前文件夹" disabled>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            <path d="M12 11v6"></path>
+                            <path d="M9 14h6"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="toolbar-right">
+                    <div class="view-toggle" aria-label="视图模式">
+                        <button id="listViewBtn" class="view-mode-btn active" data-view="list" title="列表视图">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="8" y1="6" x2="21" y2="6"></line>
+                                <line x1="8" y1="12" x2="21" y2="12"></line>
+                                <line x1="8" y1="18" x2="21" y2="18"></line>
+                                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                            </svg>
+                        </button>
+                        <button id="gridViewBtn" class="view-mode-btn" data-view="grid" title="缩略图网格">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="3" width="7" height="7"></rect>
+                                <rect x="3" y="14" width="7" height="7"></rect>
+                                <rect x="14" y="14" width="7" height="7"></rect>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="sort-options">
+                        <label>排序：</label>
+                        <select id="sortSelect" class="sort-select">
+                            <option value="name-asc">文件名 A-Z</option>
+                            <option value="name-desc">文件名 Z-A</option>
+                            <option value="size-asc">大小 从小到大</option>
+                            <option value="size-desc">大小 从大到小</option>
+                            <option value="date-asc">修改时间 旧→新</option>
+                            <option value="date-desc">修改时间 新→旧</option>
+                            <option value="score-desc">Elo 评分 高→低</option>
+                            <option value="score-asc">Elo 评分 低→高</option>
+                            <option value="random">随机排序</option>
+                        </select>
+                    </div>
+                    <div class="competition-launcher">
+                        <label for="competitionCountInput">轮数：</label>
+                        <input type="number" id="competitionCountInput" min="1" value="3" class="competition-count-input" title="竞赛轮数，3 轮会抽取 8 张图片">
+                        <button id="startCompetitionBtn" class="competition-start-btn" title="按轮数从当前文件夹优先选择参赛场数少的图片">开始</button>
+                    </div>
+                    <div class="server-image-loader">
+                        <label for="serverImageCountInput">服务端图片：</label>
+                        <input type="number" id="serverImageCountInput" min="1" max="1000" value="10" class="server-image-count-input" title="每次下载的图片数量">
+                        <button id="loadServerImagesBtn" class="server-image-load-btn">加载</button>
+                        <span id="serverImageLoadStatus" class="server-image-load-status" aria-live="polite"></span>
+                    </div>
+                    <div class="image-count" id="imageCount"></div>
+                </div>
             </div>
             <div id="imageGrid" class="image-grid">
                 <div class="empty-state">
@@ -95,12 +151,36 @@
                             <polyline points="15 18 9 12 15 6"></polyline>
                         </svg>
                     </button>
-                    <img id="modalImage" src="" alt="">
+                    <div class="modal-image-wrapper">
+                        <img id="modalImage" src="" alt="">
+                    </div>
                     <button class="modal-nav modal-next" id="modalNext">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="9 18 15 12 9 6"></polyline>
                         </svg>
                     </button>
+                    <div class="modal-zoom-controls">
+                        <button class="zoom-btn" id="zoomOutBtn" title="缩小">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="8" y1="11" x2="14" y2="11"></line>
+                            </svg>
+                        </button>
+                        <span class="zoom-level" id="zoomLevel">100%</span>
+                        <button class="zoom-btn" id="zoomInBtn" title="放大">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="11" y1="8" x2="11" y2="14"></line>
+                                <line x1="8" y1="11" x2="14" y2="11"></line>
+                            </svg>
+                        </button>
+                        <button class="zoom-btn" id="zoomResetBtn" title="重置">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                <path d="M3 3v5h5"></path>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="modal-sidebar">
                     <div class="modal-sidebar-header">
@@ -108,6 +188,7 @@
                         <span id="modalImageIndex" class="image-index"></span>
                     </div>
                     <div class="modal-filename" id="modalFilename"></div>
+                    <div class="modal-score" id="modalScore">0 分</div>
                     <div class="modal-quick-add-tag">
                         <input type="text" id="modalQuickTagInput" placeholder="快速添加标签..." maxlength="20">
                         <select id="modalQuickTagCategory" class="tag-category-select" title="选择类别">
@@ -136,7 +217,7 @@
                             </svg>
                             在文件夹中显示
                         </button>
-                        <button id="deleteBtn" class="delete-btn" title="删除图片 (Delete)">
+                        <button id="deleteBtn" class="delete-btn" title="删除图片 (D / Delete)">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"></polyline>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -144,6 +225,30 @@
                             删除图片
                         </button>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="competitionModal" class="modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content competition-content">
+            <div class="competition-header">
+                <div>
+                    <h2>图片竞赛</h2>
+                    <p id="competitionStatus">请选择更好的图片</p>
+                </div>
+                <button class="modal-close" id="competitionClose">&times;</button>
+            </div>
+            <div id="competitionBody" class="competition-body"></div>
+            <div id="competitionChampion" class="competition-champion" style="display: none;">
+                <div class="champion-label">冠军</div>
+                <img id="competitionChampionImage" alt="">
+                <h3 id="competitionChampionName"></h3>
+                <p id="competitionChampionScore"></p>
+                <div class="competition-actions">
+                    <button id="competitionRevealBtn" class="secondary-btn">定位冠军图片</button>
+                    <button id="competitionRestartBtn" class="primary-btn">再来一轮</button>
                 </div>
             </div>
         </div>
@@ -165,13 +270,6 @@
                         </svg>
                         <span>回收站</span>
                     </div>
-                    <div class="settings-nav-item" data-section="security">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                        </svg>
-                        <span>安全设置</span>
-                    </div>
                     <div class="settings-nav-item" data-section="category">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -184,6 +282,31 @@
                             <line x1="7" y1="7" x2="7.01" y2="7"></line>
                         </svg>
                         <span>标签管理</span>
+                    </div>
+                    <div class="settings-nav-item" data-section="quickOpen">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            <path d="M12 11v6"></path>
+                            <path d="M9 14h6"></path>
+                        </svg>
+                        <span>快速打开</span>
+                    </div>
+                    <div class="settings-nav-item" data-section="competition">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M8 21h8"></path>
+                            <path d="M12 17v4"></path>
+                            <path d="M7 4h10v6a5 5 0 0 1-10 0V4z"></path>
+                            <path d="M5 6H3v2a4 4 0 0 0 4 4"></path>
+                            <path d="M19 6h2v2a4 4 0 0 1-4 4"></path>
+                        </svg>
+                        <span>竞赛设置</span>
+                    </div>
+                    <div class="settings-nav-item" data-section="duplicates">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="8" y="8" width="12" height="12" rx="2"></rect>
+                            <path d="M4 16V6a2 2 0 0 1 2-2h10"></path>
+                        </svg>
+                        <span>重复图片</span>
                     </div>
                     <div class="settings-nav-item" data-section="data">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -205,77 +328,12 @@
                         </div>
                     </div>
                     
-                    <div id="settingsSecurity" class="settings-panel">
-                        <h3>安全设置</h3>
-                        <p class="settings-hint">修改密码和自动锁定时间</p>
-                        
-                        <div class="password-change-form">
-                            <input type="password" id="currentPassword" class="settings-input" placeholder="当前密码">
-                            <input type="password" id="newPassword" class="settings-input" placeholder="新密码">
-                            <input type="password" id="confirmPassword" class="settings-input" placeholder="确认新密码">
-                            <p id="passwordChangeError" class="settings-error"></p>
-                            <button id="changePasswordBtn" class="primary-btn">修改密码</button>
-                        </div>
-                        
-                        <div class="timeout-setting">
-                            <label>无操作自动锁定：</label>
-                            <select id="lockTimeoutSelect" class="settings-select">
-                                <option value="1">1 分钟</option>
-                                <option value="3">3 分钟</option>
-                                <option value="5" selected>5 分钟</option>
-                                <option value="10">10 分钟</option>
-                                <option value="15">15 分钟</option>
-                                <option value="30">30 分钟</option>
-                            </select>
-                        </div>
-                    </div>
-                    
                     <div id="settingsCategory" class="settings-panel">
                         <h3>分类管理</h3>
                         <p class="settings-hint">管理标签分类，可添加、编辑、删除分类</p>
                         <div class="add-category-form">
                             <input type="text" id="newCategoryName" placeholder="分类名称" maxlength="20">
                             <select id="newCategoryIcon" class="icon-select" title="选择图标">
-                                <option value="📌">📌 图钉</option>
-                                <option value="👤">👤 人物</option>
-                                <option value="👥">👥 群组</option>
-                                <option value="🏞️">🏞️ 风景</option>
-                                <option value="🏔️">🏔️ 山峰</option>
-                                <option value="🌊">🌊 海浪</option>
-                                <option value="🌳">🌳 树木</option>
-                                <option value="📦">📦 包裹</option>
-                                <option value="📱">📱 手机</option>
-                                <option value="💻">💻 电脑</option>
-                                <option value="📷">📷 相机</option>
-                                <option value="🚗">🚗 汽车</option>
-                                <option value="🏠">🏠 房屋</option>
-                                <option value="📅">📅 日历</option>
-                                <option value="🎉">🎉 庆祝</option>
-                                <option value="🎂">🎂 生日</option>
-                                <option value="🎄">🎄 圣诞</option>
-                                <option value="❤️">❤️ 红心</option>
-                                <option value="💖">💖 爱心</option>
-                                <option value="⭐">⭐ 星星</option>
-                                <option value="🔥">🔥 火焰</option>
-                                <option value="🎨">🎨 调色板</option>
-                                <option value="🖼️">🖼️ 画框</option>
-                                <option value="🎬">🎬 电影</option>
-                                <option value="🎵">🎵 音乐</option>
-                                <option value="📚">📚 书籍</option>
-                                <option value="💼">💼 公文包</option>
-                                <option value="🎮">🎮 游戏</option>
-                                <option value="🏀">🏀 篮球</option>
-                                <option value="⚽">⚽ 足球</option>
-                                <option value="🍳">🍳 烹饪</option>
-                                <option value="☕">☕ 咖啡</option>
-                                <option value="🍕">🍕 披萨</option>
-                                <option value="✈️">✈️ 飞机</option>
-                                <option value="🌍">🌍 地球</option>
-                                <option value="☀️">☀️ 太阳</option>
-                                <option value="🌙">🌙 月亮</option>
-                                <option value="💎">💎 钻石</option>
-                                <option value="🔑">🔑 钥匙</option>
-                                <option value="💡">💡 灯泡</option>
                             </select>
                             <button id="addCategoryBtn" class="primary-btn">添加</button>
                         </div>
@@ -301,6 +359,58 @@
                         </div>
                         <div class="tag-list" id="tagList">
                             <div class="empty-state">暂无标签</div>
+                        </div>
+                    </div>
+
+                    <div id="settingsQuickOpen" class="settings-panel">
+                        <h3>快速打开目录</h3>
+                        <p class="settings-hint">添加常用图片目录，会显示在侧边栏的快速打开下拉框中</p>
+                        <div class="quick-open-settings-form">
+                            <input type="text" id="quickOpenNameInput" placeholder="名称，例如：素材库" maxlength="30">
+                            <div class="quick-open-path-row">
+                                <input type="text" id="quickOpenPathInput" placeholder="目录路径">
+                                <button id="chooseQuickOpenFolderBtn" class="secondary-btn">选择目录</button>
+                            </div>
+                            <button id="addQuickOpenFolderBtn" class="primary-btn">添加快捷目录</button>
+                        </div>
+                        <div class="quick-open-list" id="quickOpenList"></div>
+                        <div class="quick-open-history-header">
+                            <div>
+                                <h4>最近打开的文件</h4>
+                                <p class="settings-hint">会显示在侧边栏快速打开下拉框中</p>
+                            </div>
+                            <button id="clearRecentOpenFilesBtn" class="secondary-btn" disabled>清空历史</button>
+                        </div>
+                        <div class="quick-open-list" id="recentOpenFileList"></div>
+                    </div>
+
+                    <div id="settingsCompetition" class="settings-panel">
+                        <h3>竞赛机制</h3>
+                        <p class="settings-hint">设置每组同时展示多少张图片，并从中选出 1 张进入下一轮</p>
+                        <div class="competition-settings-form">
+                            <label for="competitionGroupSizeSelect">每组机制</label>
+                            <select id="competitionGroupSizeSelect" class="settings-select">
+                                <option value="2">2 选 1</option>
+                                <option value="3">3 选 1</option>
+                                <option value="4">4 选 1</option>
+                                <option value="5">5 选 1</option>
+                                <option value="6">6 选 1</option>
+                                <option value="7">7 选 1</option>
+                                <option value="8">8 选 1</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="settingsDuplicates" class="settings-panel">
+                        <h3>重复图片检测</h3>
+                        <p class="settings-hint">检测当前打开文件夹中 hash 完全相同的图片，可定位或移入回收站</p>
+                        <div class="duplicate-toolbar">
+                            <button id="scanDuplicatesBtn" class="primary-btn">检测当前文件夹</button>
+                            <button id="deleteDuplicateImagesBtn" class="danger-outline-btn" disabled>一键删除重复图片</button>
+                            <span id="duplicateSummary" class="duplicate-summary">请先打开一个图片文件夹</span>
+                        </div>
+                        <div id="duplicateResults" class="duplicate-results">
+                            <div class="empty-state">暂无检测结果</div>
                         </div>
                     </div>
                     
@@ -338,6 +448,54 @@
                                 </div>
                                 <button id="importConfigBtn" class="secondary-btn">导入</button>
                             </div>
+                            
+                            <div class="data-action-card">
+                                <div class="data-action-icon migrate-icon">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M5 9l-3 3 3 3"></path>
+                                        <path d="M9 5l3-3 3 3"></path>
+                                        <path d="M15 19l-3 3-3-3"></path>
+                                        <path d="M19 9l3 3-3 3"></path>
+                                        <line x1="2" y1="12" x2="22" y2="12"></line>
+                                        <line x1="12" y1="2" x2="12" y2="22"></line>
+                                    </svg>
+                                </div>
+                                <div class="data-action-content">
+                                    <h4>图片迁移</h4>
+                                    <p>将当前文件夹的所有图片一键迁移到指定目录</p>
+                                </div>
+                            </div>
+                            
+                            <div class="migrate-section">
+                                <div class="migrate-info">
+                                    <div class="migrate-row">
+                                        <span class="migrate-label">源文件夹：</span>
+                                        <span class="migrate-value" id="migrateSourceFolder">未打开文件夹</span>
+                                    </div>
+                                    <div class="migrate-row">
+                                        <span class="migrate-label">目标文件夹：</span>
+                                        <span class="migrate-value" id="migrateFolderDisplay">未选择</span>
+                                    </div>
+                                    <div class="migrate-row">
+                                        <span class="migrate-label">图片数量：</span>
+                                        <span class="migrate-value" id="migrateImageCount">0 张</span>
+                                    </div>
+                                </div>
+                                <div class="migrate-options">
+                                    <label class="migrate-checkbox">
+                                        <input type="checkbox" id="migrateTaggedOnly">
+                                        <span class="checkbox-custom"></span>
+                                        <span>仅迁移已打标签的图片</span>
+                                    </label>
+                                    <div class="migrate-tagged-info" id="migrateTaggedInfo" style="display: none;">
+                                        已打标签图片：<strong id="migrateTaggedCount">0</strong> 张
+                                    </div>
+                                </div>
+                                <div class="migrate-actions">
+                                    <button id="selectMigrateFolderBtn" class="secondary-btn">选择目标文件夹</button>
+                                    <button id="migrateImagesBtn" class="primary-btn" disabled>开始迁移</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -345,6 +503,16 @@
         </div>
     </div>
 
+    <script src="renderer-state.js"></script>
+    <script src="renderer-folders.js"></script>
+    <script src="renderer-gallery.js"></script>
+    <script src="renderer-modal.js"></script>
+    <script src="renderer-settings.js"></script>
+    <script src="renderer-duplicates.js"></script>
+    <script src="renderer-data-settings.js"></script>
+    <script src="renderer-tag-settings.js"></script>
+    <script src="renderer-competition.js"></script>
+    <script src="renderer-server-images.js"></script>
     <script src="renderer.js"></script>
 </body>
 </html>
