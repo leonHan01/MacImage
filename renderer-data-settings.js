@@ -160,6 +160,43 @@ function applyImportedConfig(config) {
 
 const DEFAULT_MIGRATE_TARGET_FOLDER = '/Volumes/T7Shield/backup/base';
 let migrateTargetFolder = DEFAULT_MIGRATE_TARGET_FOLDER;
+let serverDownloadFolder = '';
+let serverDownloadConcurrency = 5;
+
+function updateServerDownloadFolderDisplay() {
+    const display = document.getElementById('serverDownloadFolderDisplay');
+    if (!display) return;
+
+    display.textContent = serverDownloadFolder || '未设置';
+    display.title = serverDownloadFolder || '';
+}
+
+async function selectServerDownloadFolder() {
+    const result = await window.electronAPI.selectServerDownloadFolder();
+    if (!result.success) return;
+
+    serverDownloadFolder = result.path;
+    updateServerDownloadFolderDisplay();
+}
+
+function updateServerDownloadConcurrencyDisplay() {
+    const input = document.getElementById('serverDownloadConcurrencyInput');
+    if (input) input.value = serverDownloadConcurrency;
+}
+
+async function saveServerDownloadConcurrency() {
+    const input = document.getElementById('serverDownloadConcurrencyInput');
+    const value = Number(input?.value);
+    const result = await window.electronAPI.setServerDownloadConcurrency(value);
+    if (!result.success) {
+        alert(result.error);
+        updateServerDownloadConcurrencyDisplay();
+        return;
+    }
+
+    serverDownloadConcurrency = result.value;
+    updateServerDownloadConcurrencyDisplay();
+}
 
 function updateMigrateTargetDisplay() {
     const display = document.getElementById('migrateFolderDisplay');
@@ -204,6 +241,41 @@ async function migrateImages() {
     const result = await window.electronAPI.migrateImages(filePaths, migrateTargetFolder);
     setMigrationBusy(false);
     handleMigrationResult(result, filePaths);
+}
+
+async function moveNewlyTaggedImageToTarget(imagePath) {
+    if (!migrateTargetFolder) {
+        return false;
+    }
+
+    const result = await window.electronAPI.moveTaggedImageToTarget(imagePath, migrateTargetFolder);
+    if (!result.success) {
+        alert(`图片已打标签，但移动到目标文件夹失败：${result.error}`);
+        return false;
+    }
+    if (!result.moved) {
+        return false;
+    }
+
+    const nextImageIndex = currentImageIndex;
+    images = images.filter(image => image.path !== imagePath);
+    renderImages();
+    updateImageCount();
+    updateMigrateSourceFolder();
+
+    if (sortedImages.length === 0) {
+        closeModal();
+        return true;
+    }
+
+    currentImageIndex = Math.min(Math.max(nextImageIndex, 0), sortedImages.length - 1);
+    resetImageTransform();
+    updateModalImage();
+    updateZoomDisplay();
+    updateImageCursor();
+    recordCurrentImageOpen();
+    imageModal.classList.add('show');
+    return true;
 }
 
 function getMigrationValidationError() {

@@ -172,6 +172,62 @@
     gap: 16px;
 }
 
+.download-folder-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 20px 24px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+.download-folder-section h4 {
+    margin-bottom: 4px;
+    font-size: 15px;
+}
+
+.download-folder-section p {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.download-folder-path {
+    max-width: 460px;
+    margin-top: 10px;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.download-concurrency-setting {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.download-concurrency-setting input {
+    width: 58px;
+    padding: 5px 7px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.download-folder-section .secondary-btn {
+    width: auto;
+    flex-shrink: 0;
+    padding: 10px 18px;
+}
+
 .data-action-card {
     display: flex;
     align-items: center;

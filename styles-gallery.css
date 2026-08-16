@@ -50,6 +50,10 @@
     cursor: not-allowed;
 }
 
+.sidebar-toggle-btn.sidebar-is-hidden svg {
+    transform: scaleX(-1);
+}
+
 .toolbar-right {
     display: flex;
     align-items: center;
@@ -182,6 +186,372 @@
 .grid-virtual-spacer {
     grid-column: 1 / -1;
     pointer-events: none;
+}
+
+.list-virtual-spacer {
+    pointer-events: none;
+}
+
+.image-grid.list-view .file-item {
+    height: 60px;
+}
+
+.image-grid.waterfall-view {
+    display: flex;
+    padding: 8px 12px 12px;
+    overflow-y: auto;
+}
+
+.waterfall-page {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    width: 100%;
+    min-width: 720px;
+    min-height: 0;
+}
+
+.waterfall-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 4px;
+}
+
+.waterfall-toolbar-copy {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.waterfall-toolbar-copy strong {
+    font-size: 15px;
+}
+
+.waterfall-toolbar-copy span,
+.waterfall-target,
+.waterfall-notice,
+.waterfall-status {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.waterfall-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.waterfall-layout-switch {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--bg-secondary);
+}
+
+.waterfall-layout-btn {
+    min-height: 26px;
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.waterfall-layout-btn:hover {
+    color: var(--text-primary);
+}
+
+.waterfall-layout-btn.active {
+    background: var(--accent-color);
+    color: #fff;
+}
+
+.waterfall-config-btn,
+.waterfall-next-btn {
+    min-height: 32px;
+    padding: 6px 11px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.waterfall-config-btn {
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.waterfall-config-btn:hover {
+    background: var(--bg-tertiary);
+}
+
+.waterfall-next-btn {
+    border: 1px solid var(--accent-color);
+    background: var(--accent-color);
+    color: #fff;
+}
+
+.waterfall-next-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+.waterfall-next-btn:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}
+
+.waterfall-target,
+.waterfall-notice,
+.waterfall-status {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.waterfall-target {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.waterfall-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.waterfall-stat {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 34px;
+    padding: 5px 9px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--bg-secondary);
+}
+
+.waterfall-stat span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.waterfall-stat strong {
+    margin-left: auto;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.waterfall-stat-success {
+    border-color: rgba(52, 199, 89, 0.38);
+}
+
+.waterfall-stat-success strong {
+    color: #248a3d;
+}
+
+.waterfall-stat-danger {
+    border-color: rgba(255, 59, 48, 0.32);
+}
+
+.waterfall-stat-danger strong {
+    color: var(--danger-color);
+}
+
+.waterfall-notice {
+    margin-bottom: 6px;
+    color: #b26a00;
+}
+
+.waterfall-status {
+    margin-bottom: 6px;
+    color: #248a3d;
+}
+
+.waterfall-cards {
+    display: grid;
+    flex: 1;
+    min-height: 0;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    align-items: stretch;
+}
+
+.waterfall-cards--10 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.waterfall-cards--10 .waterfall-card-header {
+    min-height: 36px;
+    padding: 4px 6px;
+}
+
+.waterfall-cards--10 .waterfall-card-number {
+    width: 18px;
+    height: 18px;
+    font-size: 10px;
+}
+
+.waterfall-cards--10 .waterfall-score-controls {
+    gap: 4px;
+}
+
+.waterfall-cards--10 .waterfall-score-btn {
+    min-width: 39px;
+    min-height: 25px;
+    padding: 2px 5px;
+    font-size: 11px;
+}
+
+.waterfall-cards--10 .waterfall-image-frame {
+    padding: 1px;
+}
+
+.waterfall-cards--10 .waterfall-card-footer {
+    min-height: 28px;
+    padding: 4px 6px;
+    font-size: 11px;
+}
+
+.waterfall-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--bg-primary);
+    box-shadow: var(--shadow);
+}
+
+.waterfall-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 48px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.waterfall-card-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.waterfall-score-controls {
+    display: flex;
+    gap: 6px;
+}
+
+.waterfall-score-btn {
+    min-width: 48px;
+    min-height: 30px;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.waterfall-score-btn:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.waterfall-score-btn.selected {
+    border-color: var(--accent-color);
+    background: var(--accent-color);
+    color: #fff;
+}
+
+.waterfall-image-frame {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    background: var(--bg-tertiary);
+}
+
+.waterfall-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    cursor: zoom-in;
+}
+
+.waterfall-card-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 12px;
+}
+
+.waterfall-card-footer span {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.waterfall-card-footer strong {
+    color: var(--accent-color);
+}
+
+.waterfall-card-footer em {
+    color: var(--text-secondary);
+    font-style: normal;
+}
+
+@media (max-width: 980px) {
+    .waterfall-page {
+        min-width: 680px;
+    }
+
+    .waterfall-toolbar-copy span {
+        display: none;
+    }
+
+    .waterfall-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
 }
 
 .file-item {

@@ -1,5 +1,9 @@
-function openImageModal(index) {
+let modalTagsExpanded = false;
+
+function openImageModal(index, { closeOnImageClick = false } = {}) {
     currentImageIndex = index;
+    closeModalOnImageClick = closeOnImageClick;
+    setModalTagsExpanded(false);
     resetImageTransform();
     updateModalImage();
     updateZoomDisplay();
@@ -7,10 +11,34 @@ function openImageModal(index) {
     recordCurrentImageOpen();
 }
 
+function setModalTagsExpanded(expanded) {
+    modalTagsExpanded = Boolean(expanded);
+    const modalBody = document.querySelector('#imageModal .modal-body');
+    const modal = document.getElementById('imageModal');
+    const panel = document.getElementById('modalTagsPanel');
+    const collapseButton = document.getElementById('toggleModalTagsBtn');
+    const revealButton = document.getElementById('showModalTagsBtn');
+
+    modalBody?.classList.toggle('modal-sidebar-collapsed', !modalTagsExpanded);
+    modal?.classList.toggle('modal-sidebar-collapsed', !modalTagsExpanded);
+    if (panel) panel.hidden = !modalTagsExpanded;
+    if (collapseButton) {
+        collapseButton.setAttribute('aria-expanded', String(modalTagsExpanded));
+    }
+    if (revealButton) {
+        revealButton.setAttribute('aria-expanded', String(modalTagsExpanded));
+    }
+}
+
+function toggleModalTags() {
+    setModalTagsExpanded(!modalTagsExpanded);
+}
+
 
 function closeModal() {
     imageModal.classList.remove('show');
     currentImageIndex = -1;
+    closeModalOnImageClick = false;
     resetImageTransform();
 }
 
@@ -100,6 +128,9 @@ async function toggleModalImageTag(imagePath, tagName, options = {}) {
 
     if (willAdd) {
         await addTagToImage(imagePath, tagName);
+        if (await moveNewlyTaggedImageToTarget(imagePath)) {
+            return true;
+        }
     } else {
         await removeTagFromImage(imagePath, tagName);
     }
@@ -157,6 +188,10 @@ async function toggleHeartTagForCurrentImage(e, options = {}) {
     const nextTags = hasHeart
         ? await removeTagFromImage(img.path, HEART_TAG_NAME)
         : await addTagToImage(img.path, HEART_TAG_NAME);
+
+    if (!hasHeart && await moveNewlyTaggedImageToTarget(img.path)) {
+        return;
+    }
 
     if (img.hash) {
         imageTagsByHash[img.hash] = nextTags;
@@ -361,8 +396,9 @@ function handleDeletedImage(result, img) {
 }
 
 function refreshAfterImageRemoval() {
-    duplicateGroups = buildDuplicateGroups(images);
-    duplicateScanCompleted = true;
+    if (duplicateScanCompleted) {
+        duplicateGroups = removePathsFromDuplicateGroups([deleteHistory[deleteHistory.length - 1]?.originalPath]);
+    }
 
     if (images.length === 0) {
         closeModal();
@@ -446,6 +482,9 @@ function handleKeyboard(e) {
         }
     } else if (settingsModal.classList.contains('show')) {
         if (e.key === 'Escape') closeSettings();
+    } else if (currentViewMode === 'waterfall' && e.key === 'ArrowDown' && !isEditableTarget(e.target)) {
+        e.preventDefault();
+        void advanceWaterfallPage();
     }
 }
 

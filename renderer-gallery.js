@@ -1,3 +1,5 @@
+let virtualGalleryDom = null;
+
 function renderImages() {
     let filteredImages = getFilteredImages();
     filteredImages = sortImages(filteredImages);
@@ -10,16 +12,20 @@ function renderImages() {
         return;
     }
 
-    if (currentViewMode === 'grid') {
+    if (currentViewMode === 'waterfall') {
+        renderWaterfallPage();
+    } else if (currentViewMode === 'grid') {
         renderVirtualGrid();
     } else {
-        renderListInBatches(filteredImages, galleryRenderVersion);
+        renderVirtualList();
     }
 }
 
 function cancelGalleryWork() {
     galleryRenderVersion++;
     gridVirtualState = null;
+    listVirtualState = null;
+    virtualGalleryDom = null;
     thumbnailQueue = [];
     thumbnailQueuedIndexes.clear();
 
@@ -27,19 +33,18 @@ function cancelGalleryWork() {
         cancelAnimationFrame(gridRenderFrame);
         gridRenderFrame = null;
     }
-    if (listRenderFrame) {
-        cancelAnimationFrame(listRenderFrame);
-        listRenderFrame = null;
-    }
 }
 
 function renderEmptyImageGrid() {
     cancelGalleryWork();
     updateImageGridViewClass();
     const isFolderEmpty = images.length === 0;
+    const emptyMessage = currentViewMode === 'waterfall'
+        ? (waterfallLastStatus || '没有待评分的图片')
+        : (isFolderEmpty ? '此文件夹中没有图片' : '没有匹配所选标签的图片');
     imageGrid.innerHTML = isFolderEmpty
-        ? renderEmptyState('image', '此文件夹中没有图片')
-        : renderEmptyState('search', '没有匹配所选标签的图片');
+        ? renderEmptyState('image', emptyMessage)
+        : renderEmptyState(currentViewMode === 'waterfall' ? 'image' : 'search', emptyMessage);
 }
 
 function renderEmptyState(type, message) {
@@ -67,6 +72,41 @@ function renderImageItem(img, index) {
 function renderImageRow(img, index) {
     return `
         <div class="file-item" data-index="${index}" data-path="${escapeAttribute(img.path)}">
+            ${renderImageRowContent(img)}
+        </div>
+    `;
+}
+
+function renderImageRowContent(img) {
+    return `
+        <span class="file-name">${escapeHtml(img.name)}</span>
+        <span class="file-size">${formatFileSize(img.size)}</span>
+        ${renderImageScoreBadge(img)}
+        <div class="file-tags">${renderImageTagBadges(img)}</div>
+    `;
+}
+
+function renderImageCard(img, index) {
+    return `
+        <div class="file-item file-card" data-index="${index}" data-path="${escapeAttribute(img.path)}">
+            ${renderImageCardContent(img, index)}
+        </div>
+    `;
+}
+
+function renderImageCardContent(img, index) {
+    return `
+        <div class="thumbnail-frame">
+            <div class="thumbnail-placeholder">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+            </div>
+            <img class="thumbnail-image" data-thumb-index="${index}" data-path="${escapeAttribute(img.path)}" alt="${escapeAttribute(img.name)}">
+        </div>
+        <div class="file-card-info">
             <span class="file-name">${escapeHtml(img.name)}</span>
             <span class="file-size">${formatFileSize(img.size)}</span>
             ${renderImageScoreBadge(img)}
@@ -75,39 +115,21 @@ function renderImageRow(img, index) {
     `;
 }
 
-function renderImageCard(img, index) {
-    return `
-        <div class="file-item file-card" data-index="${index}" data-path="${escapeAttribute(img.path)}">
-            <div class="thumbnail-frame">
-                <div class="thumbnail-placeholder">
-                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                        <polyline points="21 15 16 10 5 21"></polyline>
-                    </svg>
-                </div>
-                <img class="thumbnail-image" data-thumb-index="${index}" data-path="${escapeAttribute(img.path)}" alt="${escapeAttribute(img.name)}">
-            </div>
-            <div class="file-card-info">
-                <span class="file-name">${escapeHtml(img.name)}</span>
-                <span class="file-size">${formatFileSize(img.size)}</span>
-                ${renderImageScoreBadge(img)}
-                <div class="file-tags">${renderImageTagBadges(img)}</div>
-            </div>
-        </div>
-    `;
-}
-
 function updateImageGridViewClass() {
     imageGrid.classList.toggle('grid-view', currentViewMode === 'grid');
-    imageGrid.classList.toggle('list-view', currentViewMode !== 'grid');
+    imageGrid.classList.toggle('list-view', currentViewMode === 'list');
+    imageGrid.classList.toggle('waterfall-view', currentViewMode === 'waterfall');
 }
 
 function setViewMode(mode) {
-    const nextMode = mode === 'grid' ? 'grid' : 'list';
+    const nextMode = ['list', 'grid', 'waterfall'].includes(mode) ? mode : 'list';
     if (currentViewMode === nextMode) return;
 
     currentViewMode = nextMode;
+    if (currentViewMode === 'waterfall') {
+        imageGrid.scrollTop = 0;
+        waterfallLastStatus = '';
+    }
     localStorage.setItem('macimage:viewMode', currentViewMode);
     updateViewModeControls();
     renderImages();
@@ -119,35 +141,16 @@ function updateViewModeControls() {
     });
 }
 
-function renderListInBatches(items, version) {
-    imageGrid.innerHTML = '';
-    let nextIndex = 0;
-
-    function renderChunk() {
-        if (version !== galleryRenderVersion || currentViewMode !== 'list') return;
-
-        const endIndex = Math.min(nextIndex + LIST_RENDER_BATCH_SIZE, items.length);
-        const html = [];
-        for (let index = nextIndex; index < endIndex; index++) {
-            html.push(renderImageRow(items[index], index));
-        }
-        imageGrid.insertAdjacentHTML('beforeend', html.join(''));
-        nextIndex = endIndex;
-
-        if (nextIndex < items.length) {
-            listRenderFrame = requestAnimationFrame(renderChunk);
-        } else {
-            listRenderFrame = null;
-        }
-    }
-
-    renderChunk();
-}
-
 function renderVirtualGrid() {
     const version = galleryRenderVersion;
     gridVirtualState = calculateGridVirtualState(sortedImages.length);
     renderVisibleGridItems(version);
+}
+
+function renderVirtualList() {
+    const version = galleryRenderVersion;
+    listVirtualState = calculateListVirtualState(sortedImages.length);
+    renderVisibleListItems(version);
 }
 
 function calculateGridVirtualState(itemCount) {
@@ -159,6 +162,14 @@ function calculateGridVirtualState(itemCount) {
     const rowCount = Math.ceil(itemCount / columns);
 
     return { columns, rowHeight, rowCount, itemCount };
+}
+
+function calculateListVirtualState(itemCount) {
+    return {
+        rowHeight: LIST_ROW_HEIGHT,
+        rowCount: itemCount,
+        itemCount
+    };
 }
 
 function renderVisibleGridItems(version) {
@@ -174,38 +185,141 @@ function renderVisibleGridItems(version) {
     );
     const startIndex = firstRow * columns;
     const endIndex = Math.min(itemCount, (lastRow + 1) * columns);
-    const topSpacer = firstRow * rowHeight;
-    const bottomSpacer = Math.max(0, (rowCount - lastRow - 1) * rowHeight);
-    const html = [
-        renderGridSpacer(topSpacer),
-        ...sortedImages.slice(startIndex, endIndex).map((img, offset) => renderImageCard(img, startIndex + offset)),
-        renderGridSpacer(bottomSpacer)
-    ].join('');
-
-    imageGrid.innerHTML = html;
+    renderVirtualWindow({
+        mode: 'grid',
+        startIndex,
+        endIndex,
+        topSpacer: firstRow * rowHeight,
+        bottomSpacer: Math.max(0, (rowCount - lastRow - 1) * rowHeight)
+    });
     queueRenderedGridThumbnails(version);
 }
 
-function renderGridSpacer(height) {
-    return `<div class="grid-virtual-spacer" style="height: ${Math.max(0, Math.round(height))}px"></div>`;
+function renderVisibleListItems(version) {
+    if (version !== galleryRenderVersion || currentViewMode !== 'list' || !listVirtualState) return;
+
+    const { rowHeight, rowCount, itemCount } = listVirtualState;
+    const scrollTop = imageGrid.scrollTop;
+    const viewportHeight = imageGrid.clientHeight || rowHeight;
+    const firstRow = Math.max(0, Math.floor(scrollTop / rowHeight) - LIST_OVERSCAN_ROWS);
+    const lastRow = Math.min(
+        rowCount - 1,
+        Math.ceil((scrollTop + viewportHeight) / rowHeight) + LIST_OVERSCAN_ROWS
+    );
+
+    renderVirtualWindow({
+        mode: 'list',
+        startIndex: firstRow,
+        endIndex: Math.min(itemCount, lastRow + 1),
+        topSpacer: firstRow * rowHeight,
+        bottomSpacer: Math.max(0, (rowCount - lastRow - 1) * rowHeight)
+    });
+}
+
+function renderVirtualWindow({ mode, startIndex, endIndex, topSpacer, bottomSpacer }) {
+    const dom = getVirtualGalleryDom(mode);
+    const hasSameWindow = dom.startIndex === startIndex && dom.endIndex === endIndex;
+
+    dom.topSpacer.style.height = `${Math.max(0, Math.round(topSpacer))}px`;
+    dom.bottomSpacer.style.height = `${Math.max(0, Math.round(bottomSpacer))}px`;
+
+    if (hasSameWindow) return;
+
+    if (dom.topSpacer.parentNode !== imageGrid || dom.bottomSpacer.parentNode !== imageGrid) {
+        imageGrid.replaceChildren(dom.topSpacer, dom.bottomSpacer);
+    }
+
+    for (const [index, node] of dom.itemNodes) {
+        if (index < startIndex || index >= endIndex) {
+            dom.itemNodes.delete(index);
+            dom.recycledNodes.push(node);
+            node.remove();
+        }
+    }
+
+    const visibleNodes = [];
+    for (let index = startIndex; index < endIndex; index++) {
+        let node = dom.itemNodes.get(index);
+        if (!node) {
+            node = dom.recycledNodes.pop() || document.createElement('div');
+            updateVirtualItemNode(node, sortedImages[index], index, mode);
+            dom.itemNodes.set(index, node);
+        }
+        visibleNodes.push(node);
+    }
+
+    dom.startIndex = startIndex;
+    dom.endIndex = endIndex;
+    let previousNode = dom.topSpacer;
+    visibleNodes.forEach(node => {
+        if (node.previousSibling !== previousNode) {
+            imageGrid.insertBefore(node, previousNode.nextSibling || dom.bottomSpacer);
+        }
+        previousNode = node;
+    });
+}
+
+function getVirtualGalleryDom(mode) {
+    if (virtualGalleryDom && virtualGalleryDom.mode === mode) {
+        return virtualGalleryDom;
+    }
+
+    virtualGalleryDom = {
+        mode,
+        topSpacer: createVirtualSpacer(mode),
+        bottomSpacer: createVirtualSpacer(mode),
+        itemNodes: new Map(),
+        recycledNodes: [],
+        startIndex: -1,
+        endIndex: -1
+    };
+    return virtualGalleryDom;
+}
+
+function createVirtualSpacer(mode) {
+    const spacer = document.createElement('div');
+    spacer.className = mode === 'grid' ? 'grid-virtual-spacer' : 'list-virtual-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    return spacer;
+}
+
+function updateVirtualItemNode(node, img, index, mode) {
+    node.className = mode === 'grid' ? 'file-item file-card' : 'file-item';
+    node.dataset.index = String(index);
+    node.dataset.path = img.path;
+    node.innerHTML = mode === 'grid'
+        ? renderImageCardContent(img, index)
+        : renderImageRowContent(img);
 }
 
 function scheduleVirtualGridRender() {
-    if (currentViewMode !== 'grid' || !gridVirtualState || gridRenderFrame) return;
+    const virtualState = currentViewMode === 'grid' ? gridVirtualState : listVirtualState;
+    if (!virtualState || gridRenderFrame) return;
 
     const version = galleryRenderVersion;
     gridRenderFrame = requestAnimationFrame(() => {
         gridRenderFrame = null;
         if (version !== galleryRenderVersion) return;
-        renderVisibleGridItems(version);
+        if (currentViewMode === 'grid') {
+            renderVisibleGridItems(version);
+        } else {
+            renderVisibleListItems(version);
+        }
     });
 }
 
 function refreshVirtualGridLayout() {
-    if (currentViewMode !== 'grid' || sortedImages.length === 0) return;
+    if (sortedImages.length === 0) return;
 
-    gridVirtualState = calculateGridVirtualState(sortedImages.length);
-    renderVisibleGridItems(galleryRenderVersion);
+    if (currentViewMode === 'waterfall') {
+        renderWaterfallPage();
+    } else if (currentViewMode === 'grid') {
+        gridVirtualState = calculateGridVirtualState(sortedImages.length);
+        renderVisibleGridItems(galleryRenderVersion);
+    } else {
+        listVirtualState = calculateListVirtualState(sortedImages.length);
+        renderVisibleListItems(galleryRenderVersion);
+    }
 }
 
 function queueRenderedGridThumbnails(version) {

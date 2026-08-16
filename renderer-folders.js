@@ -1,3 +1,73 @@
+let isFolderLoading = false;
+let pendingDirectoryMetadataUpdates = new Map();
+let directoryMetadataRenderTimer = null;
+
+function queueDirectoryMetadataUpdates(data) {
+    if (!data || data.dirPath !== currentFolder || !Array.isArray(data.updates)) return;
+
+    data.updates.forEach((update) => {
+        if (update && typeof update.path === 'string') {
+            pendingDirectoryMetadataUpdates.set(update.path, update);
+        }
+    });
+
+    scheduleDirectoryMetadataRender();
+}
+
+function scheduleDirectoryMetadataRender() {
+    if (isFolderLoading || pendingDirectoryMetadataUpdates.size === 0 || directoryMetadataRenderTimer) return;
+
+    directoryMetadataRenderTimer = setTimeout(() => {
+        directoryMetadataRenderTimer = null;
+        applyDirectoryMetadataUpdates();
+    }, 120);
+}
+
+function applyDirectoryMetadataUpdates() {
+    if (isFolderLoading || pendingDirectoryMetadataUpdates.size === 0) return;
+
+    const imagesByPath = new Map(images.map(img => [img.path, img]));
+    let hasChanges = false;
+
+    pendingDirectoryMetadataUpdates.forEach((update, imagePath) => {
+        const image = imagesByPath.get(imagePath);
+        if (!image || !update.hash) return;
+
+        image.hash = update.hash;
+        image.tags = Array.isArray(update.tags) ? update.tags : [];
+        image.score = update.score ?? null;
+        if (image.tags.length > 0) {
+            imageTagsByHash[update.hash] = image.tags;
+        } else {
+            delete imageTagsByHash[update.hash];
+        }
+        if (update.score !== null && update.score !== undefined) {
+            imageScoresByHash[update.hash] = update.score;
+        } else {
+            delete imageScoresByHash[update.hash];
+        }
+        hasChanges = true;
+    });
+    pendingDirectoryMetadataUpdates.clear();
+
+    if (hasChanges) {
+        renderImages();
+        renderTagFilter();
+        updateImageCount();
+        updateMigrateSourceFolder();
+    }
+}
+
+function resetPendingDirectoryMetadataUpdates() {
+    pendingDirectoryMetadataUpdates.clear();
+    if (directoryMetadataRenderTimer) {
+        clearTimeout(directoryMetadataRenderTimer);
+        directoryMetadataRenderTimer = null;
+    }
+}
+
+window.electronAPI.onDirectoryImageMetadata(queueDirectoryMetadataUpdates);
+
 async function init() {
     await loadSavedSettings();
     renderInitialState();
@@ -17,6 +87,8 @@ async function loadSavedSettings() {
     pathToHash = tagData.pathToHash || {};
     imageScoresByHash = await window.electronAPI.getImageScores() || {};
     trashFolder = await window.electronAPI.getTrashFolder();
+    serverDownloadFolder = await window.electronAPI.getServerDownloadFolder();
+    serverDownloadConcurrency = await window.electronAPI.getServerDownloadConcurrency();
     quickOpenFolders = await loadQuickOpenFolders();
     recentOpenFiles = await loadRecentOpenFiles();
 }
@@ -105,6 +177,8 @@ function renderInitialState() {
     updateOpenCurrentFolderButton();
     renderTagFilter();
     updateTrashFolderDisplay();
+    updateServerDownloadFolderDisplay();
+    updateServerDownloadConcurrencyDisplay();
     updateCategorySelects();
     updateCompetitionLauncherState();
 }
@@ -164,7 +238,14 @@ async function openQuickFolder() {
 
 async function loadFolder(folderPath) {
     currentFolder = folderPath;
-    images = await window.electronAPI.readDirectory(folderPath);
+    resetWaterfallReviewSession();
+    resetPendingDirectoryMetadataUpdates();
+    isFolderLoading = true;
+    try {
+        images = await window.electronAPI.readDirectory(folderPath);
+    } finally {
+        isFolderLoading = false;
+    }
     resetRandomSortOrder();
     duplicateGroups = [];
     duplicateScanCompleted = false;
@@ -178,6 +259,7 @@ async function loadFolder(folderPath) {
     renderTagFilter();
     renderDuplicateResults();
     updateCompetitionLauncherState();
+    scheduleDirectoryMetadataRender();
 }
 
 async function openCurrentFolderInFinder() {
@@ -315,7 +397,15 @@ function revealImageInList(filePath) {
         renderVisibleGridItems(galleryRenderVersion);
     }
 
-    const imageItem = Array.from(document.querySelectorAll('.file-item'))
+    if (imageIndex >= 0 && currentViewMode === 'list') {
+        if (!listVirtualState) {
+            listVirtualState = calculateListVirtualState(sortedImages.length);
+        }
+        imageGrid.scrollTop = Math.max(0, imageIndex * listVirtualState.rowHeight - listVirtualState.rowHeight);
+        renderVisibleListItems(galleryRenderVersion);
+    }
+
+    const imageItem = Array.from(imageGrid.querySelectorAll('.file-item'))
         .find(item => item.dataset.path === filePath);
 
     if (imageItem) {

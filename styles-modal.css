@@ -87,6 +87,55 @@
     overflow: hidden;
 }
 
+.modal-body.modal-sidebar-collapsed .modal-sidebar {
+    display: none;
+}
+
+#imageModal.modal-sidebar-collapsed .modal-content {
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+}
+
+#imageModal.modal-sidebar-collapsed .modal-body {
+    border-radius: 0;
+}
+
+#imageModal.modal-sidebar-collapsed #modalImage {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    object-fit: contain;
+}
+
+.modal-sidebar-reveal {
+    position: absolute;
+    top: 12px;
+    right: 64px;
+    z-index: 6;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.55);
+    color: white;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.modal-sidebar-reveal:hover {
+    background: rgba(0, 0, 0, 0.75);
+}
+
+.modal-body:not(.modal-sidebar-collapsed) .modal-sidebar-reveal {
+    display: none;
+}
+
 .modal-image-wrapper {
     display: flex;
     align-items: center;
@@ -223,9 +272,29 @@
     border-bottom: 1px solid var(--border-color);
 }
 
-.modal-sidebar-header h3 {
+.modal-tags-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 5px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
     font-size: 14px;
     font-weight: 600;
+}
+
+.modal-tags-toggle:hover {
+    background: var(--bg-secondary);
+}
+
+.modal-tags-toggle svg {
+    width: 16px;
+    height: 16px;
+    transition: transform .2s ease;
+    transform: rotate(-90deg);
 }
 
 .image-index {
@@ -293,6 +362,17 @@
 .modal-quick-add-tag .icon-btn {
     padding: 4px;
     flex-shrink: 0;
+}
+
+.modal-tags-panel {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.modal-tags-panel[hidden] {
+    display: none;
 }
 
 .modal-tag-list {
@@ -385,6 +465,7 @@
 }
 
 .modal-sidebar-footer {
+    margin-top: auto;
     padding: 12px 16px;
     border-top: 1px solid var(--border-color);
     display: flex;

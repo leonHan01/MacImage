@@ -1,3 +1,6 @@
+const registerFileOperationHandlers = require('./main-ipc-file-operations');
+const registerServerImageHandlers = require('./main-ipc-server-images');
+
 function registerIpcHandlers(deps) {
     const {
         ipcMain,
@@ -9,20 +12,49 @@ function registerIpcHandlers(deps) {
         getStore,
         getImageEntries,
         getImageRecord,
+        hydrateImageRecord,
         mapWithConcurrency,
         getOrCreateImageHash,
         getCachedThumbnail,
+        calculateFullFileHash,
         getAvailablePath,
         getTimestampedPath,
         getNumberedPath,
         pathExists,
         moveHashMapping,
+        moveHashMappings,
         imageScanConcurrency,
         getServerDownloadDirectory
     } = deps;
 
-    const LEON_API_BASE_URL = 'http://192.168.3.35:8080';
-    const SERVER_IMAGE_LOAD_LIMIT = 1_000;
+    const FILE_OPERATION_CONCURRENCY = 6;
+    const DIRECTORY_METADATA_BATCH_SIZE = 48;
+    const FULL_HASH_CONCURRENCY = 4;
+
+    registerServerImageHandlers({
+        ipcMain,
+        dialog,
+        path,
+        fsp,
+        getMainWindow,
+        getStore,
+        mapWithConcurrency,
+        getAvailablePath,
+        getServerDownloadDirectory,
+        selectDirectory
+    });
+    registerFileOperationHandlers({
+        ipcMain,
+        path,
+        fsp,
+        getStore,
+        mapWithConcurrency,
+        getAvailablePath,
+        getNumberedPath,
+        pathExists,
+        moveHashMapping,
+        moveHashMappings
+    });
 
     ipcMain.handle('open-folder-dialog', async () => {
         const result = await dialog.showOpenDialog(getMainWindow(), {
@@ -72,119 +104,71 @@ function registerIpcHandlers(deps) {
         const pathToHash = store.get('pathToHash') || {};
         const imageTagsByHash = store.get('imageTagsByHash') || {};
         const imageScoresByHash = store.get('imageScoresByHash') || {};
-        const updatedPathToHash = {};
-
         try {
             const imageEntries = await getImageEntries(dirPath);
             const images = await mapWithConcurrency(
                 imageEntries,
                 imageScanConcurrency,
-                entry => getImageRecord(dirPath, entry.name, pathToHash, imageTagsByHash, imageScoresByHash, updatedPathToHash)
+                entry => getImageRecord(dirPath, entry.name, pathToHash, imageTagsByHash, imageScoresByHash)
             );
+            const imageRecords = images.filter(Boolean);
+            const recordsMissingHash = imageRecords.filter(image => !image.hash);
 
-            if (Object.keys(updatedPathToHash).length > 0) {
-                store.set('pathToHash', { ...pathToHash, ...updatedPathToHash });
+            if (recordsMissingHash.length > 0) {
+                void hydrateDirectoryMetadata({
+                    sender: event.sender,
+                    dirPath,
+                    records: recordsMissingHash,
+                    store
+                });
             }
 
-            return images.filter(Boolean);
+            return imageRecords;
         } catch (error) {
             console.error('Error reading directory:', error);
             return [];
         }
     });
 
-    ipcMain.handle('download-server-images', async (event, requestedCount) => {
-        const count = Number(requestedCount);
-        if (!Number.isInteger(count) || count < 1 || count > SERVER_IMAGE_LOAD_LIMIT) {
-            return { success: false, error: `下载数量必须是 1 到 ${SERVER_IMAGE_LOAD_LIMIT} 之间的整数` };
-        }
+    async function hydrateDirectoryMetadata({ sender, dirPath, records, store }) {
+        const updatedPathToHash = {};
+        let updateBatch = [];
 
-        let pictures;
+        const sendBatch = () => {
+            if (updateBatch.length === 0 || sender.isDestroyed()) return;
+            sender.send('directory-image-metadata', {
+                dirPath,
+                updates: updateBatch
+            });
+            updateBatch = [];
+        };
+
         try {
-            const response = await fetch(
-                `${LEON_API_BASE_URL}/api/leon/pictures?limit=${count}&shuffle=true`
-            );
-            if (!response.ok) {
-                throw new Error(`服务端图片列表请求失败（HTTP ${response.status}）`);
-            }
-            pictures = await response.json();
-            if (!Array.isArray(pictures)) {
-                throw new Error('服务端返回的图片列表格式无效');
+            await mapWithConcurrency(records, imageScanConcurrency, async (record) => {
+                const update = await hydrateImageRecord(
+                    record,
+                    store.get('imageTagsByHash') || {},
+                    store.get('imageScoresByHash') || {},
+                    updatedPathToHash
+                );
+                if (update) {
+                    updateBatch.push(update);
+                    if (updateBatch.length >= DIRECTORY_METADATA_BATCH_SIZE) {
+                        sendBatch();
+                    }
+                }
+                return update;
+            });
+            sendBatch();
+
+            if (Object.keys(updatedPathToHash).length > 0) {
+                const latestPathToHash = store.get('pathToHash') || {};
+                store.set('pathToHash', { ...latestPathToHash, ...updatedPathToHash });
             }
         } catch (error) {
-            return { success: false, error: `无法读取服务端图片：${error.message}` };
+            console.error('Error hydrating directory metadata:', error);
         }
-
-        if (pictures.length === 0) {
-            return { success: false, error: '服务端没有可下载的图片' };
-        }
-
-        const batchDirectory = path.join(
-            getServerDownloadDirectory(),
-            `batch-${new Date().toISOString().replace(/[:.]/g, '-')}`
-        );
-        await fsp.mkdir(batchDirectory, { recursive: true });
-
-        const downloadResults = await mapWithConcurrency(pictures, 4, async (picture) => {
-            try {
-                if (!picture || !Number.isInteger(picture.id) || typeof picture.imageUrl !== 'string') {
-                    throw new Error('图片数据缺少 id 或 imageUrl');
-                }
-
-                const imageUrl = new URL(picture.imageUrl);
-                if (!['http:', 'https:'].includes(imageUrl.protocol)) {
-                    throw new Error('图片地址必须使用 HTTP 或 HTTPS');
-                }
-
-                const imageResponse = await fetch(imageUrl);
-                if (!imageResponse.ok) {
-                    throw new Error(`图片下载失败（HTTP ${imageResponse.status}）`);
-                }
-
-                const sourceName = picture.fileName || path.basename(imageUrl.pathname) || `${picture.id}.jpg`;
-                const safeName = path.basename(sourceName).replace(/[^a-zA-Z0-9._-]/g, '_') || `${picture.id}.jpg`;
-                const destination = await getAvailablePath(
-                    path.join(batchDirectory, safeName),
-                    (index) => path.join(batchDirectory, `${picture.id}-${index}-${safeName}`)
-                );
-                await fsp.writeFile(destination, Buffer.from(await imageResponse.arrayBuffer()));
-
-                return { success: true, id: picture.id, path: destination };
-            } catch (error) {
-                return { success: false, id: picture?.id, error: error.message };
-            }
-        });
-
-        const downloaded = downloadResults.filter(result => result.success);
-        const failures = downloadResults
-            .filter(result => !result.success)
-            .map(result => ({ id: result.id ?? null, error: result.error }));
-
-        let deletionError = null;
-        if (downloaded.length > 0) {
-            try {
-                const deleteResponse = await fetch(`${LEON_API_BASE_URL}/api/leon/pictures`, {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pictureIds: downloaded.map(result => result.id) })
-                });
-                if (!deleteResponse.ok) {
-                    throw new Error(`服务端删除请求失败（HTTP ${deleteResponse.status}）`);
-                }
-            } catch (error) {
-                deletionError = error.message;
-            }
-        }
-
-        return {
-            success: downloaded.length > 0,
-            downloadDirectory: batchDirectory,
-            downloadedCount: downloaded.length,
-            deletedCount: deletionError ? 0 : downloaded.length,
-            deletionError,
-            failures
-        };
-    });
+    }
 
     ipcMain.handle('get-tags', () => getStore().get('tags') || []);
 
@@ -304,14 +288,69 @@ function registerIpcHandlers(deps) {
         }
     });
 
+    ipcMain.handle('find-duplicate-images', async (event, candidates) => {
+        try {
+            const candidateGroups = new Map();
+            (Array.isArray(candidates) ? candidates : []).forEach((candidate) => {
+                if (!candidate || typeof candidate.path !== 'string' || !Number.isFinite(candidate.size)) return;
+
+                const fastHash = typeof candidate.hash === 'string' && candidate.hash
+                    ? candidate.hash
+                    : '__missing_fast_hash__';
+                const key = `${candidate.size}:${fastHash}`;
+                if (!candidateGroups.has(key)) candidateGroups.set(key, []);
+                candidateGroups.get(key).push(candidate);
+            });
+
+            const duplicateCandidates = Array.from(candidateGroups.values())
+                .filter(group => group.length > 1)
+                .flat();
+            const results = await mapWithConcurrency(
+                duplicateCandidates,
+                FULL_HASH_CONCURRENCY,
+                async (candidate) => {
+                    try {
+                        return {
+                            path: candidate.path,
+                            hash: await calculateFullFileHash(candidate.path)
+                        };
+                    } catch (error) {
+                        return { path: candidate.path, error: error.message };
+                    }
+                }
+            );
+            const groupsByFullHash = new Map();
+            const failures = [];
+
+            results.forEach((result) => {
+                if (!result || !result.hash) {
+                    if (result) failures.push({ path: result.path, error: result.error || '无法计算完整哈希' });
+                    return;
+                }
+                if (!groupsByFullHash.has(result.hash)) groupsByFullHash.set(result.hash, []);
+                groupsByFullHash.get(result.hash).push(result.path);
+            });
+
+            return {
+                success: true,
+                groups: Array.from(groupsByFullHash.entries())
+                    .filter(([, paths]) => paths.length > 1)
+                    .map(([hash, paths]) => ({ hash, paths })),
+                failures
+            };
+        } catch (error) {
+            console.error('Error finding duplicate images:', error);
+            return { success: false, error: error.message, groups: [], failures: [] };
+        }
+    });
+
     ipcMain.handle('add-tag-to-image', async (event, imagePath, tag) => {
         const store = getStore();
-        const pathToHash = store.get('pathToHash') || {};
         const imageTagsByHash = store.get('imageTagsByHash') || {};
 
         let hash;
         try {
-            hash = pathToHash[imagePath] || await getOrCreateImageHash(imagePath);
+            hash = await getOrCreateImageHash(imagePath);
         } catch (err) {
             console.error('Failed to calculate hash:', err.message);
             return [];
@@ -323,11 +362,16 @@ function registerIpcHandlers(deps) {
         return imageTagsByHash[hash];
     });
 
-    ipcMain.handle('remove-tag-from-image', (event, imagePath, tag) => {
+    ipcMain.handle('remove-tag-from-image', async (event, imagePath, tag) => {
         const store = getStore();
-        const pathToHash = store.get('pathToHash') || {};
         const imageTagsByHash = store.get('imageTagsByHash') || {};
-        const hash = pathToHash[imagePath];
+        let hash;
+        try {
+            hash = await getOrCreateImageHash(imagePath);
+        } catch (err) {
+            console.error('Failed to calculate hash:', err.message);
+            return [];
+        }
         if (!hash) return [];
 
         if (imageTagsByHash[hash]) {
@@ -360,6 +404,48 @@ function registerIpcHandlers(deps) {
         } catch (error) {
             console.error('Error deleting image:', error);
             return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('delete-images', async (event, imagePaths) => {
+        const trashFolder = getStore().get('trashFolder');
+        if (!trashFolder) return { success: false, error: '未设置回收站文件夹', deleted: [], failures: [] };
+
+        try {
+            await fsp.mkdir(trashFolder, { recursive: true });
+            const uniquePaths = [...new Set(Array.isArray(imagePaths) ? imagePaths.filter(pathValue => typeof pathValue === 'string') : [])];
+            const batchTimestamp = Date.now();
+            const results = await mapWithConcurrency(uniquePaths, FILE_OPERATION_CONCURRENCY, async (imagePath, index) => {
+                const fileName = path.basename(imagePath);
+                const ext = path.extname(fileName);
+                const baseName = path.basename(fileName, ext);
+                const preferredPath = path.join(trashFolder, `${baseName}_${batchTimestamp}_${index}${ext}`);
+
+                try {
+                    const trashPath = await getAvailablePath(
+                        preferredPath,
+                        (counter) => path.join(trashFolder, `${baseName}_${batchTimestamp}_${index}_${counter}${ext}`)
+                    );
+                    await fsp.rename(imagePath, trashPath);
+                    return { success: true, originalPath: imagePath, trashPath, fileName };
+                } catch (error) {
+                    return { success: false, originalPath: imagePath, fileName, error: error.message };
+                }
+            });
+            const deleted = results.filter(result => result.success);
+            moveHashMappings(deleted.map(result => ({
+                fromPath: result.originalPath,
+                toPath: result.trashPath
+            })));
+
+            return {
+                success: true,
+                deleted,
+                failures: results.filter(result => !result.success)
+            };
+        } catch (error) {
+            console.error('Error deleting images:', error);
+            return { success: false, error: error.message, deleted: [], failures: [] };
         }
     });
 
@@ -439,17 +525,13 @@ function registerIpcHandlers(deps) {
         }
 
         try {
-            let count = 0;
-            let totalSize = 0;
             const imageEntries = await getImageEntries(trashFolder);
+            const stats = await mapWithConcurrency(imageEntries, FILE_OPERATION_CONCURRENCY, async (entry) => {
+                return fsp.stat(path.join(trashFolder, entry.name));
+            });
+            const totalSize = stats.reduce((total, entryStats) => total + entryStats.size, 0);
 
-            for (const entry of imageEntries) {
-                const stats = await fsp.stat(path.join(trashFolder, entry.name));
-                count++;
-                totalSize += stats.size;
-            }
-
-            return { count, size: totalSize, path: trashFolder };
+            return { count: stats.length, size: totalSize, path: trashFolder };
         } catch (error) {
             console.error('Error getting trash info:', error);
             return { count: 0, size: 0, path: trashFolder };
@@ -464,14 +546,11 @@ function registerIpcHandlers(deps) {
 
         try {
             const imageEntries = await getImageEntries(trashFolder);
-            let deletedCount = 0;
+            await mapWithConcurrency(imageEntries, FILE_OPERATION_CONCURRENCY, (entry) => {
+                return fsp.unlink(path.join(trashFolder, entry.name));
+            });
 
-            for (const entry of imageEntries) {
-                await fsp.unlink(path.join(trashFolder, entry.name));
-                deletedCount++;
-            }
-
-            return { success: true, deletedCount };
+            return { success: true, deletedCount: imageEntries.length };
         } catch (error) {
             console.error('Error emptying trash:', error);
             return { success: false, error: error.message };
@@ -559,22 +638,6 @@ function registerIpcHandlers(deps) {
         return selectDirectory(dialog, getMainWindow(), '选择快捷打开目录', 'Error selecting quick open folder:');
     });
 
-    ipcMain.handle('migrate-images', async (event, filePaths, targetFolder) => {
-        try {
-            const result = { movedCount: 0, skippedCount: 0, errors: [] };
-            for (const sourcePath of filePaths) {
-                await migrateOneImage({ sourcePath, targetFolder, result, path, fsp, pathExists, getNumberedPath, moveHashMapping });
-            }
-            return {
-                success: true,
-                ...result,
-                totalFound: result.movedCount + result.skippedCount
-            };
-        } catch (error) {
-            console.error('Error migrating images:', error);
-            return { success: false, error: error.message };
-        }
-    });
 }
 
 async function selectDirectory(dialog, mainWindow, title, logPrefix) {
@@ -589,24 +652,6 @@ async function selectDirectory(dialog, mainWindow, title, logPrefix) {
     } catch (error) {
         console.error(logPrefix, error);
         return { success: false, error: error.message };
-    }
-}
-
-async function migrateOneImage({ sourcePath, targetFolder, result, path, fsp, pathExists, getNumberedPath, moveHashMapping }) {
-    const file = path.basename(sourcePath);
-
-    try {
-        if (!(await pathExists(sourcePath))) {
-            throw new Error('源文件不存在');
-        }
-
-        const targetPath = await getNumberedPath(path.join(targetFolder, file));
-        await fsp.rename(sourcePath, targetPath);
-        moveHashMapping(sourcePath, targetPath);
-        result.movedCount++;
-    } catch (err) {
-        result.errors.push({ file, error: err.message });
-        result.skippedCount++;
     }
 }
 

@@ -1,4 +1,6 @@
-function scanDuplicateImages() {
+let duplicateScanInProgress = false;
+
+async function scanDuplicateImages() {
     if (images.length === 0) {
         duplicateGroups = [];
         duplicateScanCompleted = false;
@@ -7,29 +9,67 @@ function scanDuplicateImages() {
         return;
     }
 
-    duplicateGroups = buildDuplicateGroups(images);
-    duplicateScanCompleted = true;
-    renderDuplicateResults();
+    if (duplicateScanInProgress) return;
+
+    duplicateScanInProgress = true;
+    const scannedFolder = currentFolder;
+    const scanButton = document.getElementById('scanDuplicatesBtn');
+    if (scanButton) {
+        scanButton.disabled = true;
+        scanButton.textContent = '正在检测...';
+    }
+
+    try {
+        const result = await window.electronAPI.findDuplicateImages(images.map(img => ({
+            path: img.path,
+            size: img.size,
+            hash: img.hash
+        })));
+        if (currentFolder !== scannedFolder) return;
+        if (!result.success) {
+            alert('检测重复图片失败: ' + (result.error || '未知错误'));
+            return;
+        }
+
+        duplicateGroups = buildDuplicateGroupsFromFullHash(result.groups);
+        duplicateScanCompleted = true;
+        renderDuplicateResults();
+
+        if (result.failures?.length > 0) {
+            console.warn('部分图片未能完成重复检测:', result.failures);
+        }
+    } finally {
+        duplicateScanInProgress = false;
+        if (scanButton) {
+            scanButton.disabled = false;
+            scanButton.textContent = '检测当前文件夹';
+        }
+    }
 }
 
-function buildDuplicateGroups(sourceImages) {
-    const groups = new Map();
+function buildDuplicateGroupsFromFullHash(groups) {
+    const imagesByPath = new Map(images.map(img => [img.path, img]));
 
-    sourceImages.forEach(img => {
-        if (!img.hash) return;
-        if (!groups.has(img.hash)) {
-            groups.set(img.hash, []);
-        }
-        groups.get(img.hash).push(img);
-    });
-
-    return Array.from(groups.entries())
-        .map(([hash, groupImages]) => ({
+    return (Array.isArray(groups) ? groups : [])
+        .map(({ hash, paths }) => ({
             hash,
-            images: groupImages.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+            images: (Array.isArray(paths) ? paths : [])
+                .map(imagePath => imagesByPath.get(imagePath))
+                .filter(Boolean)
+                .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
         }))
         .filter(group => group.images.length > 1)
         .sort((a, b) => b.images.length - a.images.length);
+}
+
+function removePathsFromDuplicateGroups(paths) {
+    const deletedPaths = new Set(paths);
+    return duplicateGroups
+        .map(group => ({
+            ...group,
+            images: group.images.filter(img => !deletedPaths.has(img.path))
+        }))
+        .filter(group => group.images.length > 1);
 }
 
 function renderDuplicateResults() {
@@ -139,7 +179,7 @@ async function deleteDuplicateImage(imagePath) {
     }
 
     images = images.filter(item => item.path !== imagePath);
-    duplicateGroups = buildDuplicateGroups(images);
+    duplicateGroups = removePathsFromDuplicateGroups([imagePath]);
     duplicateScanCompleted = true;
     renderImages();
     renderTagFilter();
@@ -164,8 +204,8 @@ async function deleteDuplicateImagesDistinct() {
     }
 
     if (!duplicateScanCompleted) {
-        duplicateGroups = buildDuplicateGroups(images);
-        duplicateScanCompleted = true;
+        await scanDuplicateImages();
+        if (!duplicateScanCompleted) return;
     }
 
     const duplicateImages = duplicateGroups.flatMap(group => group.images.slice(1));
@@ -192,24 +232,28 @@ async function deleteDuplicateImagesDistinct() {
         ? sortedImages[currentImageIndex].path
         : null;
     const previousImageIndex = currentImageIndex;
-    const deletedPaths = [];
-    const failures = [];
-
-    for (const img of duplicateImages) {
-        const result = await window.electronAPI.deleteImage(img.path);
-        if (result.success) {
-            deletedPaths.push(img.path);
-            deleteHistory.push({
-                originalPath: result.originalPath,
-                trashPath: result.trashPath,
-                fileName: result.fileName,
-                index: -1,
-                hash: img.hash
-            });
-        } else {
-            failures.push({ name: img.name, error: result.error || '未知错误' });
-        }
+    const result = await window.electronAPI.deleteImages(duplicateImages.map(img => img.path));
+    if (!result.success) {
+        alert('批量删除失败: ' + (result.error || '未知错误'));
+        refreshAfterDuplicateBatchRemoval([], { modalWasOpen, modalImagePath, previousImageIndex });
+        return;
     }
+
+    const imageByPath = new Map(duplicateImages.map(img => [img.path, img]));
+    const deletedPaths = result.deleted.map(item => item.originalPath);
+    const failures = result.failures.map(item => ({
+        name: imageByPath.get(item.originalPath)?.name || item.fileName || item.originalPath,
+        error: item.error || '未知错误'
+    }));
+    result.deleted.forEach((item) => {
+        deleteHistory.push({
+            originalPath: item.originalPath,
+            trashPath: item.trashPath,
+            fileName: item.fileName,
+            index: -1,
+            hash: imageByPath.get(item.originalPath)?.hash || null
+        });
+    });
 
     refreshAfterDuplicateBatchRemoval(deletedPaths, {
         modalWasOpen,
@@ -230,7 +274,7 @@ function refreshAfterDuplicateBatchRemoval(deletedPaths, modalState) {
         images = images.filter(item => !deletedPathSet.has(item.path));
     }
 
-    duplicateGroups = buildDuplicateGroups(images);
+    duplicateGroups = removePathsFromDuplicateGroups(deletedPaths);
     duplicateScanCompleted = true;
     renderImages();
     renderTagFilter();

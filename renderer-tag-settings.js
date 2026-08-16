@@ -220,6 +220,9 @@ async function addTagToCurrentModalImage(tagName) {
     const img = sortedImages[currentImageIndex];
     if (!getImageTags(img).includes(tagName)) {
         await addTagToImage(img.path, tagName);
+        if (await moveNewlyTaggedImageToTarget(img.path)) {
+            return;
+        }
     }
 
     if (img.hash) {

@@ -1,12 +1,15 @@
 document.getElementById('openFolderBtn').addEventListener('click', openFolder);
 document.getElementById('loadServerImagesBtn').addEventListener('click', loadServerImages);
 document.getElementById('openCurrentFolderBtn').addEventListener('click', openCurrentFolderInFinder);
+document.getElementById('toggleSidebarBtn').addEventListener('click', toggleSidebar);
 document.getElementById('quickOpenFolderBtn').addEventListener('click', openQuickFolder);
 document.getElementById('settingsBtn').addEventListener('click', openSettings);
 document.getElementById('settingsClose').addEventListener('click', closeSettings);
 document.getElementById('chooseQuickOpenFolderBtn').addEventListener('click', chooseQuickOpenFolder);
 document.getElementById('addQuickOpenFolderBtn').addEventListener('click', addQuickOpenFolder);
 document.getElementById('modalClose').addEventListener('click', closeModal);
+document.getElementById('toggleModalTagsBtn').addEventListener('click', toggleModalTags);
+document.getElementById('showModalTagsBtn').addEventListener('click', () => setModalTagsExpanded(true));
 document.getElementById('modalPrev').addEventListener('click', showPrevImage);
 document.getElementById('modalNext').addEventListener('click', showNextImage);
 document.getElementById('addTagBtn').addEventListener('click', addNewTag);
@@ -16,6 +19,8 @@ document.getElementById('modalQuickAddTagBtn').addEventListener('click', modalQu
 document.getElementById('showInFolderBtn').addEventListener('click', showCurrentImageInFolder);
 
 imageGrid.addEventListener('click', (event) => {
+    if (handleWaterfallGridClick(event)) return;
+
     const item = event.target.closest('.file-item');
     if (!item) return;
 
@@ -23,6 +28,11 @@ imageGrid.addEventListener('click', (event) => {
 });
 
 imageGrid.addEventListener('scroll', scheduleVirtualGridRender);
+imageGrid.addEventListener('wheel', (event) => {
+    if (handleWaterfallWheel(event)) {
+        event.preventDefault();
+    }
+}, { passive: false });
 window.addEventListener('resize', refreshVirtualGridLayout);
 
 tagFilter.addEventListener('click', (event) => {
@@ -77,6 +87,16 @@ if (deleteDuplicateImagesBtn) {
 const selectMigrateFolderBtn = document.getElementById('selectMigrateFolderBtn');
 if (selectMigrateFolderBtn) {
     selectMigrateFolderBtn.addEventListener('click', selectMigrateFolder);
+}
+
+const selectServerDownloadFolderBtn = document.getElementById('selectServerDownloadFolderBtn');
+if (selectServerDownloadFolderBtn) {
+    selectServerDownloadFolderBtn.addEventListener('click', selectServerDownloadFolder);
+}
+
+const serverDownloadConcurrencyInput = document.getElementById('serverDownloadConcurrencyInput');
+if (serverDownloadConcurrencyInput) {
+    serverDownloadConcurrencyInput.addEventListener('change', saveServerDownloadConcurrency);
 }
 
 const migrateImagesBtn = document.getElementById('migrateImagesBtn');
@@ -167,10 +187,35 @@ document.querySelectorAll('.view-mode-btn').forEach(btn => {
     btn.addEventListener('click', () => setViewMode(btn.dataset.view));
 });
 
+function toggleSidebar() {
+    setSidebarCollapsed(!isSidebarCollapsed);
+}
+
+function setSidebarCollapsed(collapsed, options = {}) {
+    isSidebarCollapsed = Boolean(collapsed);
+    const appContainer = document.querySelector('.app-container');
+    const toggleButton = document.getElementById('toggleSidebarBtn');
+
+    appContainer?.classList.toggle('sidebar-hidden', isSidebarCollapsed);
+    if (toggleButton) {
+        toggleButton.setAttribute('aria-expanded', String(!isSidebarCollapsed));
+        toggleButton.title = isSidebarCollapsed ? '显示标签栏' : '隐藏标签栏';
+        toggleButton.classList.toggle('sidebar-is-hidden', isSidebarCollapsed);
+    }
+    if (options.persist !== false) {
+        localStorage.setItem('macimage:sidebarCollapsed', String(isSidebarCollapsed));
+    }
+
+    requestAnimationFrame(() => refreshVirtualGridLayout());
+}
+
 const modalImageEl = document.getElementById('modalImage');
 if (modalImageEl) {
+    let modalImageWasDragged = false;
+
     modalImageEl.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
+        modalImageWasDragged = false;
 
         if (currentZoom > 1) {
             isDragging = true;
@@ -182,6 +227,7 @@ if (modalImageEl) {
     
     modalImageEl.addEventListener('mousemove', (e) => {
         if (isDragging && currentZoom > 1) {
+            modalImageWasDragged = true;
             imageTranslateX = (e.clientX - dragStartX) / currentZoom;
             imageTranslateY = (e.clientY - dragStartY) / currentZoom;
             modalImageEl.style.transform = `scale(${currentZoom}) translate(${imageTranslateX}px, ${imageTranslateY}px)`;
@@ -197,6 +243,14 @@ if (modalImageEl) {
         isDragging = false;
         modalImageEl.style.cursor = currentZoom > 1 ? 'grab' : 'pointer';
     });
+
+    modalImageEl.addEventListener('click', () => {
+        if (modalImageWasDragged) {
+            modalImageWasDragged = false;
+            return;
+        }
+        if (closeModalOnImageClick) closeModal();
+    });
 }
 
 const modalImageContainer = document.querySelector('.modal-image-container');
@@ -205,6 +259,8 @@ if (modalImageContainer) {
     modalImageContainer.addEventListener('contextmenu', handleModalDeleteContextMenu);
     modalImageContainer.addEventListener('wheel', handleModalWheel);
 }
+
+setSidebarCollapsed(isSidebarCollapsed, { persist: false });
 
 window.electronAPI.onOpenFolder(async (folderPath) => {
     await loadFolder(folderPath);

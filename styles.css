@@ -113,6 +113,12 @@ a,
     opacity: .65;
 }
 
+.server-image-download-progress {
+    width: 96px;
+    height: 8px;
+    accent-color: var(--accent-color);
+}
+
 .server-image-load-status {
     max-width: 230px;
     overflow: hidden;
@@ -126,6 +132,16 @@ a,
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    min-width: 0;
+    overflow: hidden;
+    transition: width 0.2s ease, border-color 0.2s ease, opacity 0.15s ease;
+}
+
+.app-container.sidebar-hidden .sidebar {
+    width: 0;
+    border-right-color: transparent;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .sidebar-header {
@@ -432,6 +448,7 @@ a,
 
 .main-content {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;

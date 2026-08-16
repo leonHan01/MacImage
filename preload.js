@@ -3,7 +3,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
     openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
     readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
+    onDirectoryImageMetadata: (callback) => ipcRenderer.on(
+        'directory-image-metadata',
+        (event, data) => callback(data)
+    ),
     downloadServerImages: (count) => ipcRenderer.invoke('download-server-images', count),
+    onServerImageDownloadProgress: (callback) => ipcRenderer.on(
+        'server-image-download-progress',
+        (event, progress) => callback(progress)
+    ),
     getTags: () => ipcRenderer.invoke('get-tags'),
     saveTags: (tags) => ipcRenderer.invoke('save-tags', tags),
     getImageTags: () => ipcRenderer.invoke('get-image-tags'),
@@ -14,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     recordCompetitionGroupResult: (winnerPath, loserPaths) => ipcRenderer.invoke('record-competition-group-result', winnerPath, loserPaths),
     getImageHash: (imagePath) => ipcRenderer.invoke('get-image-hash', imagePath),
     getThumbnail: (imagePath, size) => ipcRenderer.invoke('get-thumbnail', imagePath, size),
+    findDuplicateImages: (candidates) => ipcRenderer.invoke('find-duplicate-images', candidates),
     addTagToImage: (imagePath, tag) => ipcRenderer.invoke('add-tag-to-image', imagePath, tag),
     removeTagFromImage: (imagePath, tag) => ipcRenderer.invoke('remove-tag-from-image', imagePath, tag),
     onOpenFolder: (callback) => ipcRenderer.on('open-folder', (event, path) => callback(path)),
@@ -26,6 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     directoryExists: (folderPath) => ipcRenderer.invoke('directory-exists', folderPath),
     fileExists: (filePath) => ipcRenderer.invoke('file-exists', filePath),
     deleteImage: (imagePath) => ipcRenderer.invoke('delete-image', imagePath),
+    deleteImages: (imagePaths) => ipcRenderer.invoke('delete-images', imagePaths),
     undoDeleteImage: (trashPath, originalPath) => ipcRenderer.invoke('undo-delete', trashPath, originalPath),
     showInFolder: (filePath) => ipcRenderer.invoke('show-in-folder', filePath),
     openFolderPath: (folderPath) => ipcRenderer.invoke('open-folder-path', folderPath),
@@ -43,7 +53,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveExportFile: (config) => ipcRenderer.invoke('save-export-file', config),
     openImportFile: () => ipcRenderer.invoke('open-import-file'),
     selectMigrateFolder: () => ipcRenderer.invoke('select-migrate-folder'),
+    getServerDownloadFolder: () => ipcRenderer.invoke('get-server-download-folder'),
+    selectServerDownloadFolder: () => ipcRenderer.invoke('select-server-download-folder'),
+    getServerDownloadConcurrency: () => ipcRenderer.invoke('get-server-download-concurrency'),
+    setServerDownloadConcurrency: (value) => ipcRenderer.invoke('set-server-download-concurrency', value),
     migrateImages: (sourceFolder, targetFolder) => ipcRenderer.invoke('migrate-images', sourceFolder, targetFolder),
+    moveTaggedImageToTarget: (imagePath, targetFolder) => ipcRenderer.invoke('move-tagged-image-to-target', imagePath, targetFolder),
+    processWaterfallPage: (page) => ipcRenderer.invoke('process-waterfall-page', page),
     onTrashFolderChanged: (callback) => ipcRenderer.on('trash-folder-changed', (event, path) => callback(path)),
     onUndoDelete: (callback) => ipcRenderer.on('undo-delete', () => callback())
 });

@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, shell } = requir
 const path = require('path');
 const fs = require('fs');
 const Store = require('./store');
-const { calculateFileHash, calculateFileHashSync } = require('./hashUtils');
+const { calculateFileHash, calculateFileHashSync, calculateFullFileHash } = require('./hashUtils');
 const registerIpcHandlers = require('./main-ipc-handlers');
 
 const fsp = fs.promises;
@@ -11,6 +11,7 @@ let mainWindow;
 let store;
 let pendingOpenImages = [];
 let rendererReady = false;
+const pendingHashCalculations = new Map();
 
 const storePath = path.join(app.getPath('userData'), 'config.json');
 const thumbnailCacheDir = path.join(app.getPath('userData'), 'thumbnails');
@@ -40,32 +41,85 @@ async function getImageEntries(dirPath) {
     ));
 }
 
-async function getImageRecord(dirPath, fileName, pathToHash, imageTagsByHash, imageScoresByHash, updatedPathToHash) {
+function getHashCacheEntry(value) {
+    if (typeof value === 'string' && value) {
+        return { hash: value, size: null, mtimeMs: null };
+    }
+
+    if (value && typeof value === 'object' && typeof value.hash === 'string' && value.hash) {
+        return {
+            hash: value.hash,
+            size: Number.isFinite(value.size) ? value.size : null,
+            mtimeMs: Number.isFinite(value.mtimeMs) ? value.mtimeMs : null
+        };
+    }
+
+    return null;
+}
+
+function createHashCacheEntry(hash, stats) {
+    return {
+        hash,
+        size: stats.size,
+        mtimeMs: stats.mtimeMs
+    };
+}
+
+function getCachedHashForStats(pathToHash, imagePath, stats) {
+    const entry = getHashCacheEntry(pathToHash[imagePath]);
+    if (!entry || entry.size !== stats.size || entry.mtimeMs !== stats.mtimeMs) {
+        return null;
+    }
+    return entry.hash;
+}
+
+async function calculateHashForStats(imagePath, stats) {
+    const key = `${imagePath}\u0000${stats.size}\u0000${stats.mtimeMs}`;
+    if (!pendingHashCalculations.has(key)) {
+        const task = calculateFileHash(imagePath).finally(() => {
+            pendingHashCalculations.delete(key);
+        });
+        pendingHashCalculations.set(key, task);
+    }
+    return pendingHashCalculations.get(key);
+}
+
+async function getImageRecord(dirPath, fileName, pathToHash, imageTagsByHash, imageScoresByHash) {
     const fullPath = path.join(dirPath, fileName);
 
     try {
         const stats = await fsp.stat(fullPath);
-        let hash = pathToHash[fullPath];
-
-        if (!hash) {
-            hash = await calculateFileHash(fullPath);
-        }
-
-        if (hash) {
-            updatedPathToHash[fullPath] = hash;
-        }
+        const hash = getCachedHashForStats(pathToHash, fullPath, stats);
 
         return {
             name: fileName,
             path: fullPath,
             size: stats.size,
             modifiedTime: stats.mtime,
+            mtimeMs: stats.mtimeMs,
             hash,
             tags: hash ? (imageTagsByHash[hash] || []) : [],
             score: hash ? (imageScoresByHash[hash] ?? null) : null
         };
     } catch (err) {
         console.error('Failed to read image:', fullPath, err.message);
+        return null;
+    }
+}
+
+async function hydrateImageRecord(record, imageTagsByHash, imageScoresByHash, updatedPathToHash) {
+    try {
+        const stats = { size: record.size, mtimeMs: record.mtimeMs };
+        const hash = await calculateHashForStats(record.path, stats);
+        updatedPathToHash[record.path] = createHashCacheEntry(hash, stats);
+        return {
+            path: record.path,
+            hash,
+            tags: imageTagsByHash[hash] || [],
+            score: imageScoresByHash[hash] ?? null
+        };
+    } catch (err) {
+        console.error('Failed to calculate image hash:', record.path, err.message);
         return null;
     }
 }
@@ -88,11 +142,12 @@ async function mapWithConcurrency(items, concurrency, mapper) {
 
 async function getOrCreateImageHash(imagePath) {
     const pathToHash = store.get('pathToHash') || {};
-    let hash = pathToHash[imagePath];
+    const stats = await fsp.stat(imagePath);
+    let hash = getCachedHashForStats(pathToHash, imagePath, stats);
 
     if (!hash) {
-        hash = await calculateFileHash(imagePath);
-        pathToHash[imagePath] = hash;
+        hash = await calculateHashForStats(imagePath, stats);
+        pathToHash[imagePath] = createHashCacheEntry(hash, stats);
         store.set('pathToHash', pathToHash);
     }
 
@@ -174,13 +229,25 @@ async function getNumberedPath(filePath) {
 }
 
 function moveHashMapping(fromPath, toPath) {
-    const pathToHash = store.get('pathToHash') || {};
-    const hash = pathToHash[fromPath];
-    if (!hash) return;
+    moveHashMappings([{ fromPath, toPath }]);
+}
 
-    delete pathToHash[fromPath];
-    pathToHash[toPath] = hash;
-    store.set('pathToHash', pathToHash);
+function moveHashMappings(moves) {
+    const pathToHash = store.get('pathToHash') || {};
+    let changed = false;
+
+    moves.forEach(({ fromPath, toPath }) => {
+        const entry = pathToHash[fromPath];
+        if (!entry) return;
+
+        delete pathToHash[fromPath];
+        pathToHash[toPath] = entry;
+        changed = true;
+    });
+
+    if (changed) {
+        store.set('pathToHash', pathToHash);
+    }
 }
 
 function flushPendingOpenImages() {
@@ -369,8 +436,9 @@ function migrateOldData() {
             try {
                 if (fs.existsSync(imagePath)) {
                     const hash = calculateFileHashSync(imagePath);
+                    const stats = fs.statSync(imagePath);
                     newImageTagsByHash[hash] = oldImageTags[imagePath];
-                    newPathToHash[imagePath] = hash;
+                    newPathToHash[imagePath] = createHashCacheEntry(hash, stats);
                 }
             } catch (err) {
                 console.error('Failed to migrate tags for:', imagePath, err.message);
@@ -394,14 +462,17 @@ registerIpcHandlers({
     getStore: () => store,
     getImageEntries,
     getImageRecord,
+    hydrateImageRecord,
     mapWithConcurrency,
     getOrCreateImageHash,
+    calculateFullFileHash,
     getCachedThumbnail,
     getAvailablePath,
     getTimestampedPath,
     getNumberedPath,
     pathExists,
     moveHashMapping,
+    moveHashMappings,
     imageScanConcurrency: IMAGE_SCAN_CONCURRENCY,
     getServerDownloadDirectory: () => path.join(app.getPath('userData'), 'server-downloads')
 });
