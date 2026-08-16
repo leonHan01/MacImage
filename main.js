@@ -13,7 +13,9 @@ let pendingOpenImages = [];
 let rendererReady = false;
 const pendingHashCalculations = new Map();
 
-const storePath = path.join(app.getPath('userData'), 'config.json');
+const userDataPath = app.getPath('userData');
+const storePath = path.join(userDataPath, 'macimage.db');
+const legacyStorePath = path.join(userDataPath, 'config.json');
 const thumbnailCacheDir = path.join(app.getPath('userData'), 'thumbnails');
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.heic', '.heif'];
 const IMAGE_SCAN_CONCURRENCY = 8;
@@ -482,7 +484,7 @@ app.whenReady().then(() => {
         return;
     }
 
-    store = new Store(storePath);
+    store = new Store(storePath, { legacyFilePath: legacyStorePath });
     migrateOldData();
     createWindow();
     getImageFilesFromArgv(process.argv).forEach(openImageFromSystem);
@@ -497,6 +499,12 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
+    }
+});
+
+app.on('will-quit', () => {
+    if (store) {
+        store.close();
     }
 });
 

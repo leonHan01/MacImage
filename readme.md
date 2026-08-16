@@ -131,7 +131,8 @@ After assigning a single-letter shortcut to a custom tag, press that letter duri
 
 Application data and thumbnail caches are stored under Electron’s `userData` directory, including:
 
-- `config.json`: tags, categories, ratings, trash folder, quick-open folders, and related settings.
+- `macimage.db`: SQLite database containing tags, categories, ratings, image hashes, the trash folder, quick-open folders, and related settings.
+- `config.json`: the legacy JSON configuration. On the first upgrade it is migrated to `macimage.db`, and a `config.json.pre-sqlite.bak` backup is retained.
 - `thumbnails/`: thumbnail cache generated from image fingerprints.
 - `server-downloads/`: default download folder for server images when no custom folder is selected.
 
