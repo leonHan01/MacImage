@@ -292,8 +292,13 @@
     color: var(--text-primary);
 }
 
-.waterfall-config-btn:hover {
+.waterfall-config-btn:hover:not(:disabled) {
     background: var(--bg-tertiary);
+}
+
+.waterfall-config-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
 }
 
 .waterfall-next-btn {
@@ -326,7 +331,7 @@
 
 .waterfall-summary {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 8px;
     margin-bottom: 6px;
 }

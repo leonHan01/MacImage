@@ -178,6 +178,7 @@ async function deleteDuplicateImage(imagePath) {
         return;
     }
 
+    recordFileOperation([createDeleteHistoryItem(result, img)]);
     images = images.filter(item => item.path !== imagePath);
     duplicateGroups = removePathsFromDuplicateGroups([imagePath]);
     duplicateScanCompleted = true;
@@ -245,15 +246,11 @@ async function deleteDuplicateImagesDistinct() {
         name: imageByPath.get(item.originalPath)?.name || item.fileName || item.originalPath,
         error: item.error || '未知错误'
     }));
-    result.deleted.forEach((item) => {
-        deleteHistory.push({
-            originalPath: item.originalPath,
-            trashPath: item.trashPath,
-            fileName: item.fileName,
-            index: -1,
-            hash: imageByPath.get(item.originalPath)?.hash || null
-        });
-    });
+    recordFileOperation(result.deleted.map(item => createDeleteHistoryItem(
+        item,
+        imageByPath.get(item.originalPath),
+        -1
+    )));
 
     refreshAfterDuplicateBatchRemoval(deletedPaths, {
         modalWasOpen,

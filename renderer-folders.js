@@ -236,7 +236,7 @@ async function openQuickFolder() {
     await loadFolder(folderPath);
 }
 
-async function loadFolder(folderPath) {
+async function loadFolder(folderPath, options = {}) {
     currentFolder = folderPath;
     resetWaterfallReviewSession();
     resetPendingDirectoryMetadataUpdates();
@@ -251,7 +251,9 @@ async function loadFolder(folderPath) {
     duplicateScanCompleted = false;
     currentFolderEl.textContent = folderPath;
     currentFolderEl.title = folderPath;
-    deleteHistory = [];
+    if (!options.preserveDeleteHistory) {
+        deleteHistory = [];
+    }
     updateOpenCurrentFolderButton();
     renderImages();
     updateImageCount();

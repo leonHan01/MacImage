@@ -240,7 +240,7 @@ async function migrateImages() {
     const filePaths = imagesToMigrate.map(img => img.path);
     const result = await window.electronAPI.migrateImages(filePaths, migrateTargetFolder);
     setMigrationBusy(false);
-    handleMigrationResult(result, filePaths);
+    handleMigrationResult(result);
 }
 
 async function moveNewlyTaggedImageToTarget(imagePath) {
@@ -314,7 +314,7 @@ function setMigrationBusy(isBusy) {
     migrateBtn.textContent = isBusy ? '迁移中...' : '开始迁移';
 }
 
-function handleMigrationResult(result, filePaths) {
+function handleMigrationResult(result) {
     if (!result.success) {
         alert('迁移失败: ' + result.error);
         return;
@@ -326,7 +326,12 @@ function handleMigrationResult(result, filePaths) {
     }
     alert(message);
 
-    images = images.filter(img => !filePaths.includes(img.path));
+    const movedPaths = Array.isArray(result.moved)
+        ? result.moved
+            .map(item => item?.originalPath)
+            .filter(Boolean)
+        : [];
+    images = images.filter(img => !movedPaths.includes(img.path));
     renderImages();
     updateImageCount();
     updateMigrateSourceFolder();

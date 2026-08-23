@@ -238,14 +238,13 @@ async function deleteTag(tagName) {
     
     allTags = allTags.filter(t => t.name !== tagName);
     await window.electronAPI.saveTags(allTags);
-    
-    for (const hash in imageTagsByHash) {
-        imageTagsByHash[hash] = imageTagsByHash[hash].filter(t => t !== tagName);
-        if (imageTagsByHash[hash].length === 0) {
-            delete imageTagsByHash[hash];
-        }
+
+    const result = await window.electronAPI.removeTagFromAllImages(tagName);
+    if (!result.success) {
+        alert('删除图片标签失败: ' + result.error);
+        return;
     }
-    await window.electronAPI.saveImageTags({ imageTagsByHash, pathToHash });
+    imageTagsByHash = result.imageTagsByHash || {};
     
     selectedFilterTags = selectedFilterTags.filter(t => t !== tagName);
     

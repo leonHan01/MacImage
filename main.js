@@ -3,14 +3,24 @@ const path = require('path');
 const fs = require('fs');
 const Store = require('./store');
 const { calculateFileHash, calculateFileHashSync, calculateFullFileHash } = require('./hashUtils');
+const { createFileOperationUtils } = require('./file-operation-utils');
 const registerIpcHandlers = require('./main-ipc-handlers');
 
 const fsp = fs.promises;
+const {
+    reserveAvailablePath,
+    moveFileSafely,
+    getTimestampedPath,
+    getNumberedPath
+} = createFileOperationUtils({ fsp, path });
 
 let mainWindow;
 let store;
 let pendingOpenImages = [];
 let rendererReady = false;
+let ipcServices = null;
+let isQuittingAfterWaterfallCleanup = false;
+let waterfallQuitCleanupStarted = false;
 const pendingHashCalculations = new Map();
 
 const userDataPath = app.getPath('userData');
@@ -149,8 +159,11 @@ async function getOrCreateImageHash(imagePath) {
 
     if (!hash) {
         hash = await calculateHashForStats(imagePath, stats);
-        pathToHash[imagePath] = createHashCacheEntry(hash, stats);
-        store.set('pathToHash', pathToHash);
+        const hashEntry = createHashCacheEntry(hash, stats);
+        store.update('pathToHash', (latestPathToHash = {}) => ({
+            ...latestPathToHash,
+            [imagePath]: hashEntry
+        }));
     }
 
     return hash;
@@ -214,42 +227,24 @@ async function getAvailablePath(filePath, buildCandidate) {
     return candidate;
 }
 
-async function getTimestampedPath(filePath) {
-    return getAvailablePath(filePath, () => {
-        const ext = path.extname(filePath);
-        const baseName = path.basename(filePath, ext);
-        return path.join(path.dirname(filePath), `${baseName}_${Date.now()}${ext}`);
-    });
-}
-
-async function getNumberedPath(filePath) {
-    return getAvailablePath(filePath, (counter) => {
-        const ext = path.extname(filePath);
-        const baseName = path.basename(filePath, ext);
-        return path.join(path.dirname(filePath), `${baseName}_${counter}${ext}`);
-    });
-}
-
 function moveHashMapping(fromPath, toPath) {
     moveHashMappings([{ fromPath, toPath }]);
 }
 
 function moveHashMappings(moves) {
-    const pathToHash = store.get('pathToHash') || {};
-    let changed = false;
+    if (!Array.isArray(moves) || moves.length === 0) return;
 
-    moves.forEach(({ fromPath, toPath }) => {
-        const entry = pathToHash[fromPath];
-        if (!entry) return;
+    store.update('pathToHash', (latestPathToHash = {}) => {
+        const nextPathToHash = { ...latestPathToHash };
+        moves.forEach(({ fromPath, toPath }) => {
+            const entry = latestPathToHash[fromPath];
+            if (!entry) return;
 
-        delete pathToHash[fromPath];
-        pathToHash[toPath] = entry;
-        changed = true;
+            delete nextPathToHash[fromPath];
+            nextPathToHash[toPath] = entry;
+        });
+        return nextPathToHash;
     });
-
-    if (changed) {
-        store.set('pathToHash', pathToHash);
-    }
 }
 
 function flushPendingOpenImages() {
@@ -367,7 +362,7 @@ function createEditMenu() {
         label: '编辑',
         submenu: [
             {
-                label: '撤销删除',
+                label: '撤销最近操作',
                 accelerator: 'Cmd+Z',
                 click: () => mainWindow.webContents.send('undo-delete')
             }
@@ -454,7 +449,7 @@ function migrateOldData() {
     }
 }
 
-registerIpcHandlers({
+ipcServices = registerIpcHandlers({
     ipcMain,
     dialog,
     shell,
@@ -470,8 +465,10 @@ registerIpcHandlers({
     calculateFullFileHash,
     getCachedThumbnail,
     getAvailablePath,
+    reserveAvailablePath,
     getTimestampedPath,
     getNumberedPath,
+    moveFileSafely,
     pathExists,
     moveHashMapping,
     moveHashMappings,
@@ -500,6 +497,26 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
     }
+});
+
+app.on('before-quit', (event) => {
+    if (isQuittingAfterWaterfallCleanup) return;
+
+    event.preventDefault();
+    if (waterfallQuitCleanupStarted) return;
+    waterfallQuitCleanupStarted = true;
+
+    Promise.resolve(ipcServices?.flushPendingWaterfallCleanup?.())
+        .then((result) => {
+            if (result?.failures?.length > 0) {
+                console.error(`Failed to flush ${result.failures.length} pending waterfall images`);
+            }
+        })
+        .catch(error => console.error('Error flushing pending waterfall cleanup:', error))
+        .finally(() => {
+            isQuittingAfterWaterfallCleanup = true;
+            app.quit();
+        });
 });
 
 app.on('will-quit', () => {

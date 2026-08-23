@@ -383,21 +383,35 @@ async function deleteCurrentImage() {
 }
 
 function handleDeletedImage(result, img) {
-    deleteHistory.push({
+    recordFileOperation([createDeleteHistoryItem(result, img, currentImageIndex)]);
+
+    images = images.filter(i => i.path !== img.path);
+    refreshAfterImageRemoval(img.path);
+}
+
+function createDeleteHistoryItem(result, img = null, index = -1) {
+    return {
+        kind: 'delete',
         originalPath: result.originalPath,
         trashPath: result.trashPath,
         fileName: result.fileName,
-        index: currentImageIndex,
-        hash: img.hash
-    });
-
-    images = images.filter(i => i.path !== img.path);
-    refreshAfterImageRemoval();
+        index,
+        hash: img?.hash || null
+    };
 }
 
-function refreshAfterImageRemoval() {
+function recordFileOperation(items) {
+    const normalizedItems = (Array.isArray(items) ? items : [])
+        .filter(item => item && ['delete', 'move'].includes(item.kind))
+        .map(item => ({ ...item }));
+    if (normalizedItems.length > 0) {
+        deleteHistory.push({ type: 'batch', items: normalizedItems });
+    }
+}
+
+function refreshAfterImageRemoval(removedPath) {
     if (duplicateScanCompleted) {
-        duplicateGroups = removePathsFromDuplicateGroups([deleteHistory[deleteHistory.length - 1]?.originalPath]);
+        duplicateGroups = removePathsFromDuplicateGroups(removedPath ? [removedPath] : []);
     }
 
     if (images.length === 0) {
@@ -419,14 +433,37 @@ async function undoLastDelete() {
         return;
     }
 
-    const lastDelete = deleteHistory.pop();
-    const result = await window.electronAPI.undoDeleteImage(lastDelete.trashPath, lastDelete.originalPath);
+    const lastOperation = deleteHistory.pop();
+    const operationItems = Array.isArray(lastOperation.items)
+        ? lastOperation.items
+        : [lastOperation];
+    const failedItems = [];
+    let restoredCount = 0;
 
-    if (result.success) {
-        await loadFolder(currentFolder);
-    } else {
-        deleteHistory.push(lastDelete);
-        alert('撤销失败: ' + result.error);
+    for (const item of [...operationItems].reverse()) {
+        const normalizedItem = item.kind ? item : { ...item, kind: 'delete' };
+        let restored = false;
+        try {
+            const result = await window.electronAPI.undoFileOperation(normalizedItem);
+            restored = result.success;
+        } catch {
+            // Keep the item in history so a later retry can recover it.
+        }
+        if (restored) {
+            restoredCount++;
+        } else {
+            failedItems.push(normalizedItem);
+        }
+    }
+
+    if (failedItems.length > 0) {
+        recordFileOperation(failedItems.reverse());
+    }
+    if (restoredCount > 0) {
+        await loadFolder(currentFolder, { preserveDeleteHistory: true });
+    }
+    if (failedItems.length > 0) {
+        alert(`撤销完成 ${restoredCount} 项，${failedItems.length} 项失败：${failedItems[0].originalPath}`);
     }
 }
 
@@ -482,9 +519,14 @@ function handleKeyboard(e) {
         }
     } else if (settingsModal.classList.contains('show')) {
         if (e.key === 'Escape') closeSettings();
-    } else if (currentViewMode === 'waterfall' && e.key === 'ArrowDown' && !isEditableTarget(e.target)) {
-        e.preventDefault();
-        void advanceWaterfallPage();
+    } else if (currentViewMode === 'waterfall' && !isEditableTarget(e.target)) {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!e.repeat) void advanceWaterfallPage();
+        } else if (e.key === 'ArrowUp' && waterfallPageSize === 3) {
+            e.preventDefault();
+            if (!e.repeat) void restorePreviousWaterfallPage();
+        }
     }
 }
 

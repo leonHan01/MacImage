@@ -15,9 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTags: () => ipcRenderer.invoke('get-tags'),
     saveTags: (tags) => ipcRenderer.invoke('save-tags', tags),
     getImageTags: () => ipcRenderer.invoke('get-image-tags'),
-    saveImageTags: (data) => ipcRenderer.invoke('save-image-tags', data),
     getImageScores: () => ipcRenderer.invoke('get-image-scores'),
-    saveImageScores: (scores) => ipcRenderer.invoke('save-image-scores', scores),
+    removeTagFromAllImages: (tagName) => ipcRenderer.invoke('remove-tag-from-all-images', tagName),
     recordCompetitionResult: (winnerPath, loserPath) => ipcRenderer.invoke('record-competition-result', winnerPath, loserPath),
     recordCompetitionGroupResult: (winnerPath, loserPaths) => ipcRenderer.invoke('record-competition-group-result', winnerPath, loserPaths),
     getImageHash: (imagePath) => ipcRenderer.invoke('get-image-hash', imagePath),
@@ -37,6 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteImage: (imagePath) => ipcRenderer.invoke('delete-image', imagePath),
     deleteImages: (imagePaths) => ipcRenderer.invoke('delete-images', imagePaths),
     undoDeleteImage: (trashPath, originalPath) => ipcRenderer.invoke('undo-delete', trashPath, originalPath),
+    undoFileOperation: (operation) => ipcRenderer.invoke('undo-file-operation', operation),
     showInFolder: (filePath) => ipcRenderer.invoke('show-in-folder', filePath),
     openFolderPath: (folderPath) => ipcRenderer.invoke('open-folder-path', folderPath),
     getCategories: () => ipcRenderer.invoke('get-categories'),
@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     migrateImages: (sourceFolder, targetFolder) => ipcRenderer.invoke('migrate-images', sourceFolder, targetFolder),
     moveTaggedImageToTarget: (imagePath, targetFolder) => ipcRenderer.invoke('move-tagged-image-to-target', imagePath, targetFolder),
     processWaterfallPage: (page) => ipcRenderer.invoke('process-waterfall-page', page),
+    restoreWaterfallPendingPage: (pageId) => ipcRenderer.invoke('restore-waterfall-pending-page', pageId),
     onTrashFolderChanged: (callback) => ipcRenderer.on('trash-folder-changed', (event, path) => callback(path)),
     onUndoDelete: (callback) => ipcRenderer.on('undo-delete', () => callback())
 });

@@ -18,8 +18,10 @@ function registerIpcHandlers(deps) {
         getCachedThumbnail,
         calculateFullFileHash,
         getAvailablePath,
+        reserveAvailablePath,
         getTimestampedPath,
         getNumberedPath,
+        moveFileSafely,
         pathExists,
         moveHashMapping,
         moveHashMappings,
@@ -43,15 +45,17 @@ function registerIpcHandlers(deps) {
         getServerDownloadDirectory,
         selectDirectory
     });
-    registerFileOperationHandlers({
+    const fileOperationServices = registerFileOperationHandlers({
         ipcMain,
         path,
         fsp,
         getStore,
         mapWithConcurrency,
         getAvailablePath,
+        reserveAvailablePath,
         getNumberedPath,
         pathExists,
+        moveFileSafely,
         moveHashMapping,
         moveHashMappings
     });
@@ -162,8 +166,10 @@ function registerIpcHandlers(deps) {
             sendBatch();
 
             if (Object.keys(updatedPathToHash).length > 0) {
-                const latestPathToHash = store.get('pathToHash') || {};
-                store.set('pathToHash', { ...latestPathToHash, ...updatedPathToHash });
+                store.update('pathToHash', (latestPathToHash = {}) => ({
+                    ...latestPathToHash,
+                    ...updatedPathToHash
+                }));
             }
         } catch (error) {
             console.error('Error hydrating directory metadata:', error);
@@ -185,19 +191,28 @@ function registerIpcHandlers(deps) {
         };
     });
 
-    ipcMain.handle('save-image-tags', (event, data) => {
-        const updates = {};
-        if (data.imageTagsByHash) updates.imageTagsByHash = data.imageTagsByHash;
-        if (data.pathToHash) updates.pathToHash = data.pathToHash;
-        if (Object.keys(updates).length > 0) getStore().setMany(updates);
-        return true;
-    });
-
     ipcMain.handle('get-image-scores', () => getStore().get('imageScoresByHash') || {});
 
-    ipcMain.handle('save-image-scores', (event, scores) => {
-        getStore().set('imageScoresByHash', scores && typeof scores === 'object' ? scores : {});
-        return true;
+    ipcMain.handle('remove-tag-from-all-images', (event, tagName) => {
+        if (typeof tagName !== 'string' || !tagName) {
+            return { success: false, error: '标签名无效' };
+        }
+
+        const store = getStore();
+        const imageTagsByHash = store.update('imageTagsByHash', (latestTags = {}) => {
+            const nextTags = {};
+            Object.entries(latestTags).forEach(([hash, tags]) => {
+                const remainingTags = Array.isArray(tags)
+                    ? tags.filter(tag => tag !== tagName)
+                    : [];
+                if (remainingTags.length > 0) {
+                    nextTags[hash] = remainingTags;
+                }
+            });
+            return nextTags;
+        });
+
+        return { success: true, imageTagsByHash };
     });
 
     ipcMain.handle('get-image-hash', async (event, imagePath) => {
@@ -211,22 +226,24 @@ function registerIpcHandlers(deps) {
 
     ipcMain.handle('record-competition-result', async (event, winnerPath, loserPath) => {
         const store = getStore();
-        const imageScoresByHash = store.get('imageScoresByHash') || {};
 
         try {
             const winnerHash = await getOrCreateImageHash(winnerPath);
             const loserHash = await getOrCreateImageHash(loserPath);
-            const winnerRecord = normalizeRatingRecord(imageScoresByHash[winnerHash]);
-            const loserRecord = normalizeRatingRecord(imageScoresByHash[loserHash]);
-            const nextRecords = calculateEloResult(winnerRecord, loserRecord);
-
-            imageScoresByHash[winnerHash] = nextRecords.winner;
-            imageScoresByHash[loserHash] = nextRecords.loser;
-            store.set('imageScoresByHash', imageScoresByHash);
+            let nextRecords;
+            const scores = store.update('imageScoresByHash', (latestScores = {}) => {
+                const nextScores = { ...latestScores };
+                const winnerRecord = normalizeRatingRecord(nextScores[winnerHash]);
+                const loserRecord = normalizeRatingRecord(nextScores[loserHash]);
+                nextRecords = calculateEloResult(winnerRecord, loserRecord);
+                nextScores[winnerHash] = nextRecords.winner;
+                nextScores[loserHash] = nextRecords.loser;
+                return nextScores;
+            });
 
             return {
                 success: true,
-                scores: imageScoresByHash,
+                scores,
                 winner: { hash: winnerHash, record: nextRecords.winner },
                 loser: { hash: loserHash, record: nextRecords.loser }
             };
@@ -238,7 +255,6 @@ function registerIpcHandlers(deps) {
 
     ipcMain.handle('record-competition-group-result', async (event, winnerPath, loserPaths) => {
         const store = getStore();
-        const imageScoresByHash = store.get('imageScoresByHash') || {};
 
         try {
             const winnerHash = await getOrCreateImageHash(winnerPath);
@@ -253,19 +269,23 @@ function registerIpcHandlers(deps) {
                 }
             }
 
-            const winnerRecord = normalizeRatingRecord(imageScoresByHash[winnerHash]);
-            const loserRecords = loserEntries.map(entry => normalizeRatingRecord(imageScoresByHash[entry.hash]));
-            const nextRecords = calculateEloGroupResult(winnerRecord, loserRecords);
+            let nextRecords;
+            const scores = store.update('imageScoresByHash', (latestScores = {}) => {
+                const nextScores = { ...latestScores };
+                const winnerRecord = normalizeRatingRecord(nextScores[winnerHash]);
+                const loserRecords = loserEntries.map(entry => normalizeRatingRecord(nextScores[entry.hash]));
+                nextRecords = calculateEloGroupResult(winnerRecord, loserRecords);
 
-            imageScoresByHash[winnerHash] = nextRecords.winner;
-            loserEntries.forEach((entry, index) => {
-                imageScoresByHash[entry.hash] = nextRecords.losers[index];
+                nextScores[winnerHash] = nextRecords.winner;
+                loserEntries.forEach((entry, index) => {
+                    nextScores[entry.hash] = nextRecords.losers[index];
+                });
+                return nextScores;
             });
-            store.set('imageScoresByHash', imageScoresByHash);
 
             return {
                 success: true,
-                scores: imageScoresByHash,
+                scores,
                 winner: { hash: winnerHash, record: nextRecords.winner },
                 losers: loserEntries.map((entry, index) => ({
                     hash: entry.hash,
@@ -345,26 +365,6 @@ function registerIpcHandlers(deps) {
     });
 
     ipcMain.handle('add-tag-to-image', async (event, imagePath, tag) => {
-        const store = getStore();
-        const imageTagsByHash = store.get('imageTagsByHash') || {};
-
-        let hash;
-        try {
-            hash = await getOrCreateImageHash(imagePath);
-        } catch (err) {
-            console.error('Failed to calculate hash:', err.message);
-            return [];
-        }
-
-        if (!imageTagsByHash[hash]) imageTagsByHash[hash] = [];
-        if (!imageTagsByHash[hash].includes(tag)) imageTagsByHash[hash].push(tag);
-        store.set('imageTagsByHash', imageTagsByHash);
-        return imageTagsByHash[hash];
-    });
-
-    ipcMain.handle('remove-tag-from-image', async (event, imagePath, tag) => {
-        const store = getStore();
-        const imageTagsByHash = store.get('imageTagsByHash') || {};
         let hash;
         try {
             hash = await getOrCreateImageHash(imagePath);
@@ -374,11 +374,41 @@ function registerIpcHandlers(deps) {
         }
         if (!hash) return [];
 
-        if (imageTagsByHash[hash]) {
-            imageTagsByHash[hash] = imageTagsByHash[hash].filter(t => t !== tag);
-            if (imageTagsByHash[hash].length === 0) delete imageTagsByHash[hash];
-            store.set('imageTagsByHash', imageTagsByHash);
+        const store = getStore();
+        const imageTagsByHash = store.update('imageTagsByHash', (latestTags = {}) => {
+            const nextTags = { ...latestTags };
+            const currentTags = Array.isArray(nextTags[hash]) ? nextTags[hash] : [];
+            if (!currentTags.includes(tag)) {
+                nextTags[hash] = [...currentTags, tag];
+            }
+            return nextTags;
+        });
+        return imageTagsByHash[hash] || [];
+    });
+
+    ipcMain.handle('remove-tag-from-image', async (event, imagePath, tag) => {
+        let hash;
+        try {
+            hash = await getOrCreateImageHash(imagePath);
+        } catch (err) {
+            console.error('Failed to calculate hash:', err.message);
+            return [];
         }
+        if (!hash) return [];
+
+        const store = getStore();
+        const imageTagsByHash = store.update('imageTagsByHash', (latestTags = {}) => {
+            const nextTags = { ...latestTags };
+            if (Array.isArray(nextTags[hash])) {
+                const remainingTags = nextTags[hash].filter(currentTag => currentTag !== tag);
+                if (remainingTags.length > 0) {
+                    nextTags[hash] = remainingTags;
+                } else {
+                    delete nextTags[hash];
+                }
+            }
+            return nextTags;
+        });
 
         return imageTagsByHash[hash] || [];
     });
@@ -392,7 +422,7 @@ function registerIpcHandlers(deps) {
             const fileName = path.basename(imagePath);
             const destPath = await getTimestampedPath(path.join(trashFolder, fileName));
 
-            await fsp.rename(imagePath, destPath);
+            await moveFileSafely(imagePath, destPath);
             moveHashMapping(imagePath, destPath);
 
             return {
@@ -422,11 +452,11 @@ function registerIpcHandlers(deps) {
                 const preferredPath = path.join(trashFolder, `${baseName}_${batchTimestamp}_${index}${ext}`);
 
                 try {
-                    const trashPath = await getAvailablePath(
+                    const trashPath = await reserveAvailablePath(
                         preferredPath,
                         (counter) => path.join(trashFolder, `${baseName}_${batchTimestamp}_${index}_${counter}${ext}`)
                     );
-                    await fsp.rename(imagePath, trashPath);
+                    await moveFileSafely(imagePath, trashPath);
                     return { success: true, originalPath: imagePath, trashPath, fileName };
                 } catch (error) {
                     return { success: false, originalPath: imagePath, fileName, error: error.message };
@@ -451,27 +481,42 @@ function registerIpcHandlers(deps) {
 
     ipcMain.handle('undo-delete', async (event, trashPath, originalPath) => {
         try {
-            if (!(await pathExists(trashPath))) {
-                return { success: false, error: '回收站中找不到该文件' };
-            }
-
-            const originalDir = path.dirname(originalPath);
-            if (!(await pathExists(originalDir))) {
-                return { success: false, error: '原始目录不存在' };
-            }
-
-            const restorePath = await getAvailablePath(originalPath, () => {
-                const ext = path.extname(originalPath);
-                const baseName = path.basename(originalPath, ext);
-                return path.join(originalDir, `${baseName}_restored_${Date.now()}${ext}`);
+            return await restoreFileOperation({
+                sourcePath: trashPath,
+                originalPath,
+                path,
+                pathExists,
+                reserveAvailablePath,
+                moveFileSafely,
+                moveHashMapping,
+                missingSourceError: '回收站中找不到该文件'
             });
-
-            await fsp.rename(trashPath, restorePath);
-            moveHashMapping(trashPath, restorePath);
-
-            return { success: true, restoredPath: restorePath, originalPath };
         } catch (error) {
             console.error('Error undoing delete:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('undo-file-operation', async (event, operation) => {
+        const kind = operation?.kind;
+        const sourcePath = kind === 'move' ? operation.targetPath : operation?.trashPath;
+        if (!['delete', 'move'].includes(kind)) {
+            return { success: false, error: '无法识别的撤销操作' };
+        }
+
+        try {
+            return await restoreFileOperation({
+                sourcePath,
+                originalPath: operation.originalPath,
+                path,
+                pathExists,
+                reserveAvailablePath,
+                moveFileSafely,
+                moveHashMapping,
+                missingSourceError: '找不到待撤销的文件'
+            });
+        } catch (error) {
+            console.error('Error undoing file operation:', error);
             return { success: false, error: error.message };
         }
     });
@@ -638,6 +683,42 @@ function registerIpcHandlers(deps) {
         return selectDirectory(dialog, getMainWindow(), '选择快捷打开目录', 'Error selecting quick open folder:');
     });
 
+    return fileOperationServices;
+}
+
+async function restoreFileOperation({
+    sourcePath,
+    originalPath,
+    path,
+    pathExists,
+    reserveAvailablePath,
+    moveFileSafely,
+    moveHashMapping,
+    missingSourceError
+}) {
+    if (typeof sourcePath !== 'string' || typeof originalPath !== 'string') {
+        return { success: false, error: '撤销操作的文件路径无效' };
+    }
+    if (!(await pathExists(sourcePath))) {
+        return { success: false, error: missingSourceError };
+    }
+
+    const originalDir = path.dirname(originalPath);
+    if (!(await pathExists(originalDir))) {
+        return { success: false, error: '原始目录不存在' };
+    }
+
+    const restoreTimestamp = Date.now();
+    const restorePath = await reserveAvailablePath(originalPath, (counter) => {
+        const ext = path.extname(originalPath);
+        const baseName = path.basename(originalPath, ext);
+        return path.join(originalDir, `${baseName}_restored_${restoreTimestamp}_${counter}${ext}`);
+    });
+
+    await moveFileSafely(sourcePath, restorePath);
+    moveHashMapping(sourcePath, restorePath);
+
+    return { success: true, restoredPath: restorePath, originalPath };
 }
 
 async function selectDirectory(dialog, mainWindow, title, logPrefix) {

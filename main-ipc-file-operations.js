@@ -1,4 +1,5 @@
 const FILE_OPERATION_CONCURRENCY = 6;
+const WATERFALL_DEFERRED_PAGE_LIMIT = 5;
 
 function registerFileOperationHandlers(deps) {
     const {
@@ -7,21 +8,31 @@ function registerFileOperationHandlers(deps) {
         fsp,
         getStore,
         mapWithConcurrency,
-        getAvailablePath,
+        reserveAvailablePath,
         getNumberedPath,
         pathExists,
+        moveFileSafely,
         moveHashMapping,
         moveHashMappings
     } = deps;
+    const deferredWaterfallPages = [];
+    let nextDeferredWaterfallPageId = 1;
+    let deferredCleanupWork = Promise.resolve();
+
+    function runDeferredCleanupTask(task) {
+        const result = deferredCleanupWork.then(task, task);
+        deferredCleanupWork = result.catch(() => {});
+        return result;
+    }
 
     ipcMain.handle('migrate-images', async (event, filePaths, targetFolder) => {
         try {
-            const result = { movedCount: 0, skippedCount: 0, errors: [] };
+            const result = { movedCount: 0, skippedCount: 0, errors: [], moved: [] };
             const hashMoves = [];
             const migrationGroups = groupPathsByFileName(filePaths, path);
             await mapWithConcurrency(migrationGroups, FILE_OPERATION_CONCURRENCY, async (pathsWithSameName) => {
                 for (const sourcePath of pathsWithSameName) {
-                    await migrateOneImage({
+                    const moveResult = await migrateOneImage({
                         sourcePath,
                         targetFolder,
                         result,
@@ -29,9 +40,16 @@ function registerFileOperationHandlers(deps) {
                         fsp,
                         pathExists,
                         getNumberedPath,
+                        moveFileSafely,
                         moveHashMapping,
                         hashMoves
                     });
+                    if (moveResult.success) {
+                        result.moved.push({
+                            originalPath: sourcePath,
+                            targetPath: moveResult.targetPath
+                        });
+                    }
                 }
             });
             moveHashMappings(hashMoves);
@@ -59,6 +77,7 @@ function registerFileOperationHandlers(deps) {
             fsp,
             pathExists,
             getNumberedPath,
+            moveFileSafely,
             moveHashMapping
         });
         if (!moveResult.success) {
@@ -72,6 +91,7 @@ function registerFileOperationHandlers(deps) {
         const unratedPaths = getUnratedPaths(page?.unratedPaths, ratedByPath);
         const ratedPaths = [...ratedByPath.keys()];
         const targetFolder = typeof page?.targetFolder === 'string' ? page.targetFolder : '';
+        const deferUnrated = page?.deferUnrated === true;
         const trashFolder = getStore().get('trashFolder');
         const validationError = validateWaterfallFolders({
             ratedPaths,
@@ -92,23 +112,146 @@ function registerFileOperationHandlers(deps) {
                 fsp,
                 pathExists,
                 getNumberedPath,
+                moveFileSafely,
                 moveHashMapping
             });
-            await moveUnratedImagesToTrash({
-                unratedPaths,
-                trashFolder,
-                result,
-                path,
-                fsp,
-                getAvailablePath,
-                moveHashMapping
-            });
+            if (deferUnrated) {
+                const deferredResult = await runDeferredCleanupTask(async () => {
+                    const pendingPage = stageWaterfallPage({
+                        deferredWaterfallPages,
+                        pageId: `waterfall-pending-${nextDeferredWaterfallPageId++}`,
+                        unratedPaths,
+                        trashFolder
+                    });
+                    const releasedBatchIds = [];
+
+                    while (deferredWaterfallPages.length > WATERFALL_DEFERRED_PAGE_LIMIT) {
+                        const oldestPage = deferredWaterfallPages.shift();
+                        releasedBatchIds.push(oldestPage.id);
+                        const failedPaths = await commitDeferredWaterfallPage({
+                            pendingPage: oldestPage,
+                            result,
+                            path,
+                            fsp,
+                            reserveAvailablePath,
+                            moveFileSafely,
+                            moveHashMapping
+                        });
+                        if (failedPaths.length > 0) {
+                            deferredWaterfallPages.unshift({ ...oldestPage, paths: failedPaths });
+                            break;
+                        }
+                    }
+
+                    return { pendingPage, releasedBatchIds };
+                });
+                result.pending = deferredResult.pendingPage.paths.map(originalPath => ({ originalPath }));
+                result.pendingBatchId = deferredResult.pendingPage.paths.length > 0
+                    ? deferredResult.pendingPage.id
+                    : null;
+                result.releasedBatchIds = deferredResult.releasedBatchIds;
+            } else {
+                await moveUnratedImagesToTrash({
+                    unratedPaths,
+                    trashFolder,
+                    result,
+                    path,
+                    fsp,
+                    reserveAvailablePath,
+                    moveFileSafely,
+                    moveHashMapping
+                });
+            }
             return { success: true, ...result };
         } catch (error) {
             console.error('Error processing waterfall page:', error);
             return { success: false, error: error.message, ...result };
         }
     });
+
+    ipcMain.handle('restore-waterfall-pending-page', async (event, pageId) => {
+        return runDeferredCleanupTask(async () => {
+            const pageIndex = deferredWaterfallPages.findIndex(page => page.id === pageId);
+            if (pageIndex < 0) {
+                return { success: false, error: '这页待清理图片已提交，无法返回' };
+            }
+
+            const [pendingPage] = deferredWaterfallPages.splice(pageIndex, 1);
+            return { success: true, paths: [...pendingPage.paths] };
+        });
+    });
+
+    async function flushPendingWaterfallCleanup() {
+        return runDeferredCleanupTask(async () => {
+            const result = { deleted: [], failures: [] };
+            while (deferredWaterfallPages.length > 0) {
+                const pendingPage = deferredWaterfallPages.shift();
+                await commitDeferredWaterfallPage({
+                    pendingPage,
+                    result,
+                    path,
+                    fsp,
+                    reserveAvailablePath,
+                    moveFileSafely,
+                    moveHashMapping
+                });
+            }
+            return result;
+        });
+    }
+
+    return { flushPendingWaterfallCleanup };
+}
+
+function stageWaterfallPage({ deferredWaterfallPages, pageId, unratedPaths, trashFolder }) {
+    const pendingPage = {
+        id: pageId,
+        paths: [...unratedPaths],
+        trashFolder
+    };
+    if (pendingPage.paths.length > 0) {
+        deferredWaterfallPages.push(pendingPage);
+    }
+    return pendingPage;
+}
+
+async function commitDeferredWaterfallPage({
+    pendingPage,
+    result,
+    path,
+    fsp,
+    reserveAvailablePath,
+    moveFileSafely,
+    moveHashMapping
+}) {
+    const pageResult = { deleted: [], failures: [] };
+    try {
+        await moveUnratedImagesToTrash({
+            unratedPaths: pendingPage.paths,
+            trashFolder: pendingPage.trashFolder,
+            result: pageResult,
+            path,
+            fsp,
+            reserveAvailablePath,
+            moveFileSafely,
+            moveHashMapping
+        });
+    } catch (error) {
+        const completedPaths = new Set([
+            ...pageResult.deleted.map(item => item.originalPath),
+            ...pageResult.failures.map(item => item.path)
+        ]);
+        pendingPage.paths
+            .filter(sourcePath => !completedPaths.has(sourcePath))
+            .forEach(sourcePath => pageResult.failures.push({
+                path: sourcePath,
+                action: 'delete',
+                error: error.message
+            }));
+    }
+    result.deleted.push(...pageResult.deleted);
+    result.failures.push(...pageResult.failures);
+    return pageResult.failures.map(failure => failure.path);
 }
 
 function getRatedImages(ratedImages) {
@@ -143,7 +286,7 @@ function validateWaterfallFolders({ ratedPaths, unratedPaths, targetFolder, tras
     return '';
 }
 
-async function moveRatedImages({ ratedByPath, targetFolder, result, path, fsp, pathExists, getNumberedPath, moveHashMapping }) {
+async function moveRatedImages({ ratedByPath, targetFolder, result, path, fsp, pathExists, getNumberedPath, moveFileSafely, moveHashMapping }) {
     const ratedPaths = [...ratedByPath.keys()];
     if (ratedPaths.length === 0) return;
 
@@ -157,6 +300,7 @@ async function moveRatedImages({ ratedByPath, targetFolder, result, path, fsp, p
             fsp,
             pathExists,
             getNumberedPath,
+            moveFileSafely,
             moveHashMapping
         });
         if (moveResult.success) {
@@ -167,7 +311,7 @@ async function moveRatedImages({ ratedByPath, targetFolder, result, path, fsp, p
     }
 }
 
-async function moveUnratedImagesToTrash({ unratedPaths, trashFolder, result, path, fsp, getAvailablePath, moveHashMapping }) {
+async function moveUnratedImagesToTrash({ unratedPaths, trashFolder, result, path, fsp, reserveAvailablePath, moveFileSafely, moveHashMapping }) {
     if (unratedPaths.length === 0) return;
 
     await fsp.mkdir(trashFolder, { recursive: true });
@@ -179,11 +323,11 @@ async function moveUnratedImagesToTrash({ unratedPaths, trashFolder, result, pat
         const baseName = path.basename(fileName, ext);
         const preferredPath = path.join(trashFolder, `${baseName}_${batchTimestamp}_${index}${ext}`);
         try {
-            const trashPath = await getAvailablePath(
+            const trashPath = await reserveAvailablePath(
                 preferredPath,
                 (counter) => path.join(trashFolder, `${baseName}_${batchTimestamp}_${index}_${counter}${ext}`)
             );
-            await fsp.rename(sourcePath, trashPath);
+            await moveFileSafely(sourcePath, trashPath);
             moveHashMapping(sourcePath, trashPath);
             result.deleted.push({ originalPath: sourcePath, trashPath, fileName });
         } catch (error) {
@@ -192,13 +336,13 @@ async function moveUnratedImagesToTrash({ unratedPaths, trashFolder, result, pat
     }
 }
 
-async function migrateOneImage({ sourcePath, targetFolder, result, path, fsp, pathExists, getNumberedPath, moveHashMapping, hashMoves = null }) {
+async function migrateOneImage({ sourcePath, targetFolder, result, path, fsp, pathExists, getNumberedPath, moveFileSafely, moveHashMapping, hashMoves = null }) {
     const file = path.basename(sourcePath);
     try {
         if (!(await pathExists(sourcePath))) throw new Error('源文件不存在');
 
         const targetPath = await getNumberedPath(path.join(targetFolder, file));
-        await fsp.rename(sourcePath, targetPath);
+        await moveFileSafely(sourcePath, targetPath);
         if (hashMoves) {
             hashMoves.push({ fromPath: sourcePath, toPath: targetPath });
         } else {

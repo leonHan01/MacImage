@@ -185,6 +185,16 @@ class Store {
         this.data[key] = value;
     }
 
+    update(key, updater) {
+        if (typeof updater !== 'function') {
+            throw new TypeError('Store updater must be a function');
+        }
+
+        const nextValue = updater(this.get(key));
+        this.set(key, nextValue);
+        return nextValue;
+    }
+
     setMany(values) {
         if (!values || typeof values !== 'object' || Array.isArray(values)) {
             return;

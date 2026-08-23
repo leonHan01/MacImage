@@ -28,7 +28,8 @@ MacImage is a macOS image browsing and organization tool built with Electron. It
 
 - Large-image waterfall review
   - Review images in a 3-card or 10-card layout.
-  - Assign each image a score from 1 to 3. When advancing to the next page, rated images are moved to the target folder and unrated images are moved to the trash folder.
+  - Assign each image a score from 1 to 3. Rated images move to the target folder when advancing. In the 3-card layout, unrated images are deferred so the five most recent pages can be restored with Previous or the Up arrow; older pages move to trash, and any remaining deferred cleanup is committed when the app quits.
+  - The 10-card layout keeps immediate cleanup and moves unrated images to trash when advancing.
   - View per-page and cumulative counts and file sizes for collected and deleted images.
 
 - Duplicate image detection
@@ -37,7 +38,7 @@ MacImage is a macOS image browsing and organization tool built with Electron. It
 
 - File organization and trash
   - Set a trash folder before deleting images. Deletion moves files to the configured folder instead of permanently removing them.
-  - Undo the most recent deletion with `Cmd + Z`.
+  - Undo the most recent deletion, duplicate cleanup, or waterfall operation with `Cmd + Z`.
   - Move all images in the current folder, or only tagged images, to a selected target folder.
   - Append a number to conflicting filenames instead of overwriting existing files.
   - View trash usage and permanently empty the trash from Settings.
@@ -111,7 +112,7 @@ Build artifacts are written to `dist/`. The current packaging configuration targ
 | Image preview | `0` | Reset zoom |
 | Image preview | `F` | Toggle the `红心` (“Heart”) tag and advance |
 | Image preview | `D` / `Delete` | Move the image to the trash |
-| Global | `Cmd + Z` | Undo the most recent deletion |
+| Global | `Cmd + Z` | Undo the most recent file operation |
 | Image competition | `1`–`8` | Choose the corresponding image |
 | Competition / preview | `Esc` | Close the current window |
 
