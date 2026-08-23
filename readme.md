@@ -28,6 +28,7 @@ MacImage is a macOS image browsing and organization tool built with Electron. It
 
 - Large-image waterfall review
   - Review images in a 3-card or 10-card layout.
+  - Right-click an image in the 3-card layout to mark it as 1 point.
   - Assign each image a score from 1 to 3. Rated images move to the target folder when advancing. In the 3-card layout, unrated images are deferred so the five most recent pages can be restored with Previous or the Up arrow; older pages move to trash, and any remaining deferred cleanup is committed when the app quits.
   - The 10-card layout keeps immediate cleanup and moves unrated images to trash when advancing.
   - View per-page and cumulative counts and file sizes for collected and deleted images.
@@ -114,6 +115,8 @@ Build artifacts are written to `dist/`. The current packaging configuration targ
 | Image preview | `D` / `Delete` | Move the image to the trash |
 | Global | `Cmd + Z` | Undo the most recent file operation |
 | Image competition | `1`–`8` | Choose the corresponding image |
+| Waterfall review | `↓` / `Space` | Advance and organize the current page |
+| 3-card waterfall | `↑` | Restore the previous pending-cleanup page |
 | Competition / preview | `Esc` | Close the current window |
 
 After assigning a single-letter shortcut to a custom tag, press that letter during image preview to toggle the tag and advance to the next image. `F` and `D` are reserved by built-in actions and cannot be assigned to tags.

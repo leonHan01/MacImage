@@ -520,7 +520,9 @@ function handleKeyboard(e) {
     } else if (settingsModal.classList.contains('show')) {
         if (e.key === 'Escape') closeSettings();
     } else if (currentViewMode === 'waterfall' && !isEditableTarget(e.target)) {
-        if (e.key === 'ArrowDown') {
+        const isUnmodifiedSpace = (e.key === ' ' || e.code === 'Space') &&
+            !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+        if (e.key === 'ArrowDown' || isUnmodifiedSpace) {
             e.preventDefault();
             if (!e.repeat) void advanceWaterfallPage();
         } else if (e.key === 'ArrowUp' && waterfallPageSize === 3) {

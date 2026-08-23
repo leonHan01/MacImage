@@ -24,7 +24,7 @@ async function mapWithConcurrency(items, concurrency, mapper) {
     return results;
 }
 
-function registerTestHandlers(trashFolder) {
+function registerTestHandlers(trashFolder, overrides = {}) {
     const handlers = {};
     const ipcMain = { handle: (name, handler) => { handlers[name] = handler; } };
     const utils = createFileOperationUtils({ fsp: fs.promises, path });
@@ -44,7 +44,7 @@ function registerTestHandlers(trashFolder) {
                 return false;
             }
         },
-        moveFileSafely: utils.moveFileSafely,
+        moveFileSafely: overrides.moveFileSafely || utils.moveFileSafely,
         moveHashMapping: () => {},
         moveHashMappings: () => {}
     });
@@ -172,7 +172,9 @@ test('restoring a pending waterfall page keeps its files out of cleanup', async 
             targetFolder: '',
             deferUnrated: true
         });
+        assert.deepEqual(await handlers['get-waterfall-pending-paths'](), [imagePath]);
         const restoreResult = await handlers['restore-waterfall-pending-page']({}, stageResult.pendingBatchId);
+        assert.deepEqual(await handlers['get-waterfall-pending-paths'](), []);
         const flushResult = await services.flushPendingWaterfallCleanup();
 
         assert.equal(restoreResult.success, true);
@@ -214,6 +216,52 @@ test('flushing pending waterfall cleanup moves all remaining files to trash', as
         assert.equal(flushResult.failures.length, 0);
         assert.equal((await readdir(sourceDir)).length, 0);
         assert.equal((await readdir(trashDir)).length, 2);
+    } finally {
+        await rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('quit cleanup waits for an active waterfall page before flushing its pending images', async () => {
+    const tempDir = await mkdtemp(TEMP_ROOT);
+    try {
+        const sourceDir = path.join(tempDir, 'source');
+        const targetDir = path.join(tempDir, 'target');
+        const trashDir = path.join(tempDir, 'trash');
+        await Promise.all([sourceDir, targetDir, trashDir].map(dirPath => fs.promises.mkdir(dirPath)));
+        const ratedPath = path.join(sourceDir, 'rated.jpg');
+        const pendingPath = path.join(sourceDir, 'pending.jpg');
+        await writeFile(ratedPath, 'rated');
+        await writeFile(pendingPath, 'pending');
+
+        const utils = createFileOperationUtils({ fsp: fs.promises, path });
+        let releaseFirstMove;
+        const firstMoveGate = new Promise(resolve => { releaseFirstMove = resolve; });
+        let shouldWait = true;
+        const { handlers, services } = registerTestHandlers(trashDir, {
+            moveFileSafely: async (sourcePath, targetPath) => {
+                if (shouldWait) {
+                    shouldWait = false;
+                    await firstMoveGate;
+                }
+                return utils.moveFileSafely(sourcePath, targetPath);
+            }
+        });
+
+        const pagePromise = handlers['process-waterfall-page']({}, {
+            ratedImages: [{ path: ratedPath, score: 1 }],
+            unratedPaths: [pendingPath],
+            targetFolder: targetDir,
+            deferUnrated: true
+        });
+        const flushPromise = services.flushPendingWaterfallCleanup();
+        releaseFirstMove();
+        const [pageResult, flushResult] = await Promise.all([pagePromise, flushPromise]);
+
+        assert.equal(pageResult.success, true);
+        assert.equal(flushResult.deleted.length, 1);
+        assert.equal((await readdir(sourceDir)).length, 0);
+        assert.equal((await readdir(targetDir)).length, 1);
+        assert.equal((await readdir(trashDir)).length, 1);
     } finally {
         await rm(tempDir, { recursive: true, force: true });
     }

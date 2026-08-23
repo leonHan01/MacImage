@@ -31,6 +31,13 @@ function renderWaterfallPage() {
                         评分图片将移至：${escapeHtml(migrateTargetFolder || '请先选择目标文件夹')}
                     </span>
                 </div>
+                <section class="waterfall-summary" aria-label="评分整理统计">
+                    ${renderWaterfallStat('本页已评分', readyCount, readySize)}
+                    ${renderWaterfallStat('本页待删除', pendingCount, pendingSize, 'danger')}
+                    ${usesDeferredCleanup ? renderWaterfallStat('待清理（可上翻）', pendingCleanupImages.length, sumImageSizes(pendingCleanupImages), 'danger') : ''}
+                    ${renderWaterfallStat('累计已汇集', waterfallMovedCount, waterfallMovedSize, 'success')}
+                    ${renderWaterfallStat('已提交清理（回收站）', waterfallDeletedCount, waterfallDeletedSize, 'danger')}
+                </section>
                 <div class="waterfall-toolbar-actions">
                     ${renderWaterfallLayoutSwitch()}
                     <button type="button" class="waterfall-config-btn" data-waterfall-action="select-target">选择目标文件夹</button>
@@ -45,13 +52,6 @@ function renderWaterfallPage() {
                     </button>
                 </div>
             </header>
-            <section class="waterfall-summary" aria-label="评分整理统计">
-                ${renderWaterfallStat('本页已评分', readyCount, readySize)}
-                ${renderWaterfallStat('本页待删除', pendingCount, pendingSize, 'danger')}
-                ${usesDeferredCleanup ? renderWaterfallStat('待清理（可上翻）', pendingCleanupImages.length, sumImageSizes(pendingCleanupImages), 'danger') : ''}
-                ${renderWaterfallStat('累计已汇集', waterfallMovedCount, waterfallMovedSize, 'success')}
-                ${renderWaterfallStat('已提交清理（回收站）', waterfallDeletedCount, waterfallDeletedSize, 'danger')}
-            </section>
             ${configMessage ? `<p class="waterfall-notice">${escapeHtml(configMessage)}</p>` : ''}
             ${waterfallLastStatus ? `<p class="waterfall-status">${escapeHtml(waterfallLastStatus)}</p>` : ''}
             <div class="waterfall-cards waterfall-cards--${waterfallPageSize}">
@@ -70,17 +70,17 @@ function renderFinishedWaterfallPage() {
                     <strong>本轮浏览完成</strong>
                     <span>剩余待清理图片会在退出应用时提交</span>
                 </div>
+                <section class="waterfall-summary" aria-label="评分整理统计">
+                    ${renderWaterfallStat('待清理（可上翻）', pendingCleanupImages.length, sumImageSizes(pendingCleanupImages), 'danger')}
+                    ${renderWaterfallStat('累计已汇集', waterfallMovedCount, waterfallMovedSize, 'success')}
+                    ${renderWaterfallStat('已提交清理（回收站）', waterfallDeletedCount, waterfallDeletedSize, 'danger')}
+                </section>
                 <div class="waterfall-toolbar-actions">
                     <button type="button" class="waterfall-config-btn" data-waterfall-action="previous" title="返回上一页待清理图片（方向键上）" ${waterfallIsProcessing ? 'disabled' : ''}>
                         上一页
                     </button>
                 </div>
             </header>
-            <section class="waterfall-summary" aria-label="评分整理统计">
-                ${renderWaterfallStat('待清理（可上翻）', pendingCleanupImages.length, sumImageSizes(pendingCleanupImages), 'danger')}
-                ${renderWaterfallStat('累计已汇集', waterfallMovedCount, waterfallMovedSize, 'success')}
-                ${renderWaterfallStat('已提交清理（回收站）', waterfallDeletedCount, waterfallDeletedSize, 'danger')}
-            </section>
             ${waterfallLastStatus ? `<p class="waterfall-status">${escapeHtml(waterfallLastStatus)}</p>` : ''}
             ${renderEmptyState('image', '没有更多待评分图片，可按 ↑ 返回上一页')}
         </section>
@@ -165,7 +165,7 @@ function renderWaterfallCard(img, index) {
                     `).join('')}
                 </div>
             </div>
-            <div class="waterfall-image-frame">
+            <div class="waterfall-image-frame" ${waterfallPageSize === 3 ? 'title="右键标记为 1 分"' : ''}>
                 <img class="waterfall-image" src="${escapeAttribute(toFileUrl(img.path))}" alt="${escapeAttribute(img.name)}">
             </div>
             <footer class="waterfall-card-footer" title="${escapeAttribute(img.name)}">
@@ -230,6 +230,20 @@ function handleWaterfallGridClick(event) {
         return true;
     }
     return false;
+}
+
+function handleWaterfallContextMenu(event) {
+    if (currentViewMode !== 'waterfall' || waterfallPageSize !== 3) return false;
+
+    const card = event.target.closest('.waterfall-card');
+    const imagePath = card?.dataset.waterfallPath;
+    if (!imagePath) return false;
+    if (waterfallIsProcessing) return true;
+
+    waterfallScores.set(imagePath, 1);
+    waterfallLastStatus = '';
+    renderWaterfallPage();
+    return true;
 }
 
 function openWaterfallImageFromEvent(event) {
@@ -380,8 +394,6 @@ async function advanceWaterfallPage() {
         const failures = Array.isArray(result.failures) ? result.failures : [];
         if (failures.length > 0) {
             waterfallLastStatus = `${failures.length} 张图片处理失败，请重试。`;
-        } else if (pending.length > 0) {
-            waterfallLastStatus = `已暂存 ${pending.length} 张待清理图片；可按 ↑ 返回上一页。`;
         } else {
             waterfallLastStatus = '';
         }

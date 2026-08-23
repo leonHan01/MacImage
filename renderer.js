@@ -27,6 +27,12 @@ imageGrid.addEventListener('click', (event) => {
     openImageModal(parseInt(item.dataset.index, 10));
 });
 
+imageGrid.addEventListener('contextmenu', (event) => {
+    if (handleWaterfallContextMenu(event)) {
+        event.preventDefault();
+    }
+});
+
 imageGrid.addEventListener('scroll', scheduleVirtualGridRender);
 imageGrid.addEventListener('wheel', (event) => {
     if (handleWaterfallWheel(event)) {

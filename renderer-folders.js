@@ -242,7 +242,12 @@ async function loadFolder(folderPath, options = {}) {
     resetPendingDirectoryMetadataUpdates();
     isFolderLoading = true;
     try {
-        images = await window.electronAPI.readDirectory(folderPath);
+        const [folderImages, pendingWaterfallPaths] = await Promise.all([
+            window.electronAPI.readDirectory(folderPath),
+            window.electronAPI.getWaterfallPendingPaths()
+        ]);
+        const pendingPathSet = new Set(Array.isArray(pendingWaterfallPaths) ? pendingWaterfallPaths : []);
+        images = folderImages.filter(img => !pendingPathSet.has(img.path));
     } finally {
         isFolderLoading = false;
     }

@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     moveTaggedImageToTarget: (imagePath, targetFolder) => ipcRenderer.invoke('move-tagged-image-to-target', imagePath, targetFolder),
     processWaterfallPage: (page) => ipcRenderer.invoke('process-waterfall-page', page),
     restoreWaterfallPendingPage: (pageId) => ipcRenderer.invoke('restore-waterfall-pending-page', pageId),
+    getWaterfallPendingPaths: () => ipcRenderer.invoke('get-waterfall-pending-paths'),
     onTrashFolderChanged: (callback) => ipcRenderer.on('trash-folder-changed', (event, path) => callback(path)),
     onUndoDelete: (callback) => ipcRenderer.on('undo-delete', () => callback())
 });

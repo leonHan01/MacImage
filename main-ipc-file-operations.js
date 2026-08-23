@@ -18,6 +18,8 @@ function registerFileOperationHandlers(deps) {
     const deferredWaterfallPages = [];
     let nextDeferredWaterfallPageId = 1;
     let deferredCleanupWork = Promise.resolve();
+    let isFlushingDeferredWaterfallCleanup = false;
+    const activeWaterfallPageProcesses = new Set();
 
     function runDeferredCleanupTask(task) {
         const result = deferredCleanupWork.then(task, task);
@@ -86,7 +88,21 @@ function registerFileOperationHandlers(deps) {
         return { success: true, moved: true, path: moveResult.targetPath };
     });
 
-    ipcMain.handle('process-waterfall-page', async (event, page) => {
+    ipcMain.handle('process-waterfall-page', (event, page) => {
+        if (isFlushingDeferredWaterfallCleanup) {
+            return { success: false, error: '应用正在退出，无法继续翻页' };
+        }
+
+        const operation = processWaterfallPage(page);
+        activeWaterfallPageProcesses.add(operation);
+        void operation.then(
+            () => activeWaterfallPageProcesses.delete(operation),
+            () => activeWaterfallPageProcesses.delete(operation)
+        );
+        return operation;
+    });
+
+    async function processWaterfallPage(page) {
         const ratedByPath = getRatedImages(page?.ratedImages);
         const unratedPaths = getUnratedPaths(page?.unratedPaths, ratedByPath);
         const ratedPaths = [...ratedByPath.keys()];
@@ -167,9 +183,12 @@ function registerFileOperationHandlers(deps) {
             console.error('Error processing waterfall page:', error);
             return { success: false, error: error.message, ...result };
         }
-    });
+    }
 
     ipcMain.handle('restore-waterfall-pending-page', async (event, pageId) => {
+        if (isFlushingDeferredWaterfallCleanup) {
+            return { success: false, error: '应用正在退出，无法返回上一页' };
+        }
         return runDeferredCleanupTask(async () => {
             const pageIndex = deferredWaterfallPages.findIndex(page => page.id === pageId);
             if (pageIndex < 0) {
@@ -181,7 +200,15 @@ function registerFileOperationHandlers(deps) {
         });
     });
 
+    ipcMain.handle('get-waterfall-pending-paths', () => {
+        return runDeferredCleanupTask(async () => (
+            deferredWaterfallPages.flatMap(pendingPage => pendingPage.paths)
+        ));
+    });
+
     async function flushPendingWaterfallCleanup() {
+        isFlushingDeferredWaterfallCleanup = true;
+        await Promise.allSettled([...activeWaterfallPageProcesses]);
         return runDeferredCleanupTask(async () => {
             const result = { deleted: [], failures: [] };
             while (deferredWaterfallPages.length > 0) {
