@@ -134,9 +134,9 @@ npm run build:dmg
 
 应用配置和缩略图缓存保存在 Electron 的 `userData` 目录中，主要包括：
 
-- `macimage.db`：SQLite 数据库，保存标签、分类、评分、图片 hash、回收站和快捷目录等配置。
+- `macimage.db`：SQLite 数据库，保存标签、分类、评分、图片 hash、回收站和快捷目录等配置。图片路径 hash、图片标签和评分使用独立索引表，旧版聚合 JSON 数据会在首次启动时自动迁移。
 - `config.json`：旧版本 JSON 配置。首次升级时会自动迁移到 `macimage.db`，并保留 `config.json.pre-sqlite.bak` 备份。
-- `thumbnails/`：按图片指纹生成的缩略图缓存。
+- `thumbnails/`：按图片指纹生成的网格缩略图和瀑布流/竞赛预览图缓存。
 - `server-downloads/`：未指定下载目录时的服务端图片默认下载目录。
 
 在 macOS 上，该目录通常位于：

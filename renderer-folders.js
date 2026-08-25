@@ -82,10 +82,6 @@ async function loadSavedSettings() {
     allTags = await window.electronAPI.getTags() || [];
     await normalizeTags();
 
-    const tagData = await window.electronAPI.getImageTags();
-    imageTagsByHash = tagData.imageTagsByHash || {};
-    pathToHash = tagData.pathToHash || {};
-    imageScoresByHash = await window.electronAPI.getImageScores() || {};
     trashFolder = await window.electronAPI.getTrashFolder();
     serverDownloadFolder = await window.electronAPI.getServerDownloadFolder();
     serverDownloadConcurrency = await window.electronAPI.getServerDownloadConcurrency();
@@ -248,6 +244,7 @@ async function loadFolder(folderPath, options = {}) {
         ]);
         const pendingPathSet = new Set(Array.isArray(pendingWaterfallPaths) ? pendingWaterfallPaths : []);
         images = folderImages.filter(img => !pendingPathSet.has(img.path));
+        rebuildCurrentImageMetadataIndexes(images);
     } finally {
         isFolderLoading = false;
     }
@@ -267,6 +264,22 @@ async function loadFolder(folderPath, options = {}) {
     renderDuplicateResults();
     updateCompetitionLauncherState();
     scheduleDirectoryMetadataRender();
+}
+
+function rebuildCurrentImageMetadataIndexes(imageList) {
+    const nextTagsByHash = {};
+    const nextScoresByHash = {};
+    (Array.isArray(imageList) ? imageList : []).forEach((image) => {
+        if (!image || !image.hash) return;
+        if (Array.isArray(image.tags) && image.tags.length > 0) {
+            nextTagsByHash[image.hash] = image.tags;
+        }
+        if (image.score !== null && image.score !== undefined) {
+            nextScoresByHash[image.hash] = image.score;
+        }
+    });
+    imageTagsByHash = nextTagsByHash;
+    imageScoresByHash = nextScoresByHash;
 }
 
 async function openCurrentFolderInFinder() {

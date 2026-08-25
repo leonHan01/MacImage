@@ -140,7 +140,7 @@ function renderCompetitionChoices(group) {
     bodyEl.innerHTML = group.map((img, index) => `
         <div class="competition-choice">
             <button class="competition-image-btn" data-choice-index="${index}" title="选择第 ${index + 1} 张">
-                <img src="${toFileUrl(img.path)}" alt="${escapeAttribute(img.name)}">
+                <img ${renderDisplayPreviewAttributes(img)} alt="${escapeAttribute(img.name)}">
             </button>
             <div class="competition-image-meta">
                 <strong title="${escapeAttribute(img.path)}">${escapeHtml(img.name)}</strong>
@@ -148,6 +148,7 @@ function renderCompetitionChoices(group) {
             </div>
         </div>
     `).join('');
+    hydrateDisplayPreviews(bodyEl);
 }
 
 async function chooseCompetitionWinner(choiceIndex) {
@@ -167,9 +168,6 @@ async function chooseCompetitionWinner(choiceIndex) {
         return;
     }
 
-    if (result.scores) {
-        imageScoresByHash = result.scores;
-    }
     if (result.winner) {
         setImageRatingRecord(winner, result.winner.record);
     }

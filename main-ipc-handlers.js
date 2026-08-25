@@ -16,6 +16,7 @@ function registerIpcHandlers(deps) {
         mapWithConcurrency,
         getOrCreateImageHash,
         getCachedThumbnail,
+        getCachedPreview,
         calculateFullFileHash,
         getAvailablePath,
         reserveAvailablePath,
@@ -105,17 +106,23 @@ function registerIpcHandlers(deps) {
 
     ipcMain.handle('read-directory', async (event, dirPath) => {
         const store = getStore();
-        const pathToHash = store.get('pathToHash') || {};
-        const imageTagsByHash = store.get('imageTagsByHash') || {};
-        const imageScoresByHash = store.get('imageScoresByHash') || {};
         try {
             const imageEntries = await getImageEntries(dirPath);
+            const pathToHash = store.getPathHashesForDirectory(dirPath);
             const images = await mapWithConcurrency(
                 imageEntries,
                 imageScanConcurrency,
-                entry => getImageRecord(dirPath, entry.name, pathToHash, imageTagsByHash, imageScoresByHash)
+                entry => getImageRecord(dirPath, entry.name, pathToHash)
             );
             const imageRecords = images.filter(Boolean);
+            const metadataByHash = store.getImageMetadataForHashes(
+                imageRecords.map(image => image.hash).filter(Boolean)
+            );
+            imageRecords.forEach((image) => {
+                if (!image.hash || !metadataByHash[image.hash]) return;
+                image.tags = metadataByHash[image.hash].tags;
+                image.score = metadataByHash[image.hash].score;
+            });
             const recordsMissingHash = imageRecords.filter(image => !image.hash);
 
             if (recordsMissingHash.length > 0) {
@@ -151,8 +158,7 @@ function registerIpcHandlers(deps) {
             await mapWithConcurrency(records, imageScanConcurrency, async (record) => {
                 const update = await hydrateImageRecord(
                     record,
-                    store.get('imageTagsByHash') || {},
-                    store.get('imageScoresByHash') || {},
+                    store,
                     updatedPathToHash
                 );
                 if (update) {
@@ -166,10 +172,7 @@ function registerIpcHandlers(deps) {
             sendBatch();
 
             if (Object.keys(updatedPathToHash).length > 0) {
-                store.update('pathToHash', (latestPathToHash = {}) => ({
-                    ...latestPathToHash,
-                    ...updatedPathToHash
-                }));
+                store.setPathHashes(updatedPathToHash);
             }
         } catch (error) {
             console.error('Error hydrating directory metadata:', error);
@@ -183,36 +186,14 @@ function registerIpcHandlers(deps) {
         return true;
     });
 
-    ipcMain.handle('get-image-tags', () => {
-        const store = getStore();
-        return {
-            imageTagsByHash: store.get('imageTagsByHash') || {},
-            pathToHash: store.get('pathToHash') || {}
-        };
-    });
-
-    ipcMain.handle('get-image-scores', () => getStore().get('imageScoresByHash') || {});
-
     ipcMain.handle('remove-tag-from-all-images', (event, tagName) => {
         if (typeof tagName !== 'string' || !tagName) {
             return { success: false, error: '标签名无效' };
         }
 
         const store = getStore();
-        const imageTagsByHash = store.update('imageTagsByHash', (latestTags = {}) => {
-            const nextTags = {};
-            Object.entries(latestTags).forEach(([hash, tags]) => {
-                const remainingTags = Array.isArray(tags)
-                    ? tags.filter(tag => tag !== tagName)
-                    : [];
-                if (remainingTags.length > 0) {
-                    nextTags[hash] = remainingTags;
-                }
-            });
-            return nextTags;
-        });
-
-        return { success: true, imageTagsByHash };
+        const removedCount = store.removeTagFromAllImages(tagName);
+        return { success: true, removedCount };
     });
 
     ipcMain.handle('get-image-hash', async (event, imagePath) => {
@@ -231,19 +212,16 @@ function registerIpcHandlers(deps) {
             const winnerHash = await getOrCreateImageHash(winnerPath);
             const loserHash = await getOrCreateImageHash(loserPath);
             let nextRecords;
-            const scores = store.update('imageScoresByHash', (latestScores = {}) => {
-                const nextScores = { ...latestScores };
-                const winnerRecord = normalizeRatingRecord(nextScores[winnerHash]);
-                const loserRecord = normalizeRatingRecord(nextScores[loserHash]);
-                nextRecords = calculateEloResult(winnerRecord, loserRecord);
-                nextScores[winnerHash] = nextRecords.winner;
-                nextScores[loserHash] = nextRecords.loser;
-                return nextScores;
+            const winnerRecord = normalizeRatingRecord(store.getImageScore(winnerHash));
+            const loserRecord = normalizeRatingRecord(store.getImageScore(loserHash));
+            nextRecords = calculateEloResult(winnerRecord, loserRecord);
+            store.setImageScores({
+                [winnerHash]: nextRecords.winner,
+                [loserHash]: nextRecords.loser
             });
 
             return {
                 success: true,
-                scores,
                 winner: { hash: winnerHash, record: nextRecords.winner },
                 loser: { hash: loserHash, record: nextRecords.loser }
             };
@@ -270,22 +248,17 @@ function registerIpcHandlers(deps) {
             }
 
             let nextRecords;
-            const scores = store.update('imageScoresByHash', (latestScores = {}) => {
-                const nextScores = { ...latestScores };
-                const winnerRecord = normalizeRatingRecord(nextScores[winnerHash]);
-                const loserRecords = loserEntries.map(entry => normalizeRatingRecord(nextScores[entry.hash]));
-                nextRecords = calculateEloGroupResult(winnerRecord, loserRecords);
-
-                nextScores[winnerHash] = nextRecords.winner;
-                loserEntries.forEach((entry, index) => {
-                    nextScores[entry.hash] = nextRecords.losers[index];
-                });
-                return nextScores;
+            const winnerRecord = normalizeRatingRecord(store.getImageScore(winnerHash));
+            const loserRecords = loserEntries.map(entry => normalizeRatingRecord(store.getImageScore(entry.hash)));
+            nextRecords = calculateEloGroupResult(winnerRecord, loserRecords);
+            const scoreUpdates = { [winnerHash]: nextRecords.winner };
+            loserEntries.forEach((entry, index) => {
+                scoreUpdates[entry.hash] = nextRecords.losers[index];
             });
+            store.setImageScores(scoreUpdates);
 
             return {
                 success: true,
-                scores,
                 winner: { hash: winnerHash, record: nextRecords.winner },
                 losers: loserEntries.map((entry, index) => ({
                     hash: entry.hash,
@@ -304,6 +277,15 @@ function registerIpcHandlers(deps) {
             return await getCachedThumbnail(imagePath, size);
         } catch (err) {
             console.error('Failed to get thumbnail:', err.message);
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('get-preview', async (event, imagePath, size) => {
+        try {
+            return await getCachedPreview(imagePath, size);
+        } catch (err) {
+            console.error('Failed to get preview:', err.message);
             return { success: false, error: err.message };
         }
     });
@@ -375,15 +357,7 @@ function registerIpcHandlers(deps) {
         if (!hash) return [];
 
         const store = getStore();
-        const imageTagsByHash = store.update('imageTagsByHash', (latestTags = {}) => {
-            const nextTags = { ...latestTags };
-            const currentTags = Array.isArray(nextTags[hash]) ? nextTags[hash] : [];
-            if (!currentTags.includes(tag)) {
-                nextTags[hash] = [...currentTags, tag];
-            }
-            return nextTags;
-        });
-        return imageTagsByHash[hash] || [];
+        return store.addImageTag(hash, tag);
     });
 
     ipcMain.handle('remove-tag-from-image', async (event, imagePath, tag) => {
@@ -397,20 +371,7 @@ function registerIpcHandlers(deps) {
         if (!hash) return [];
 
         const store = getStore();
-        const imageTagsByHash = store.update('imageTagsByHash', (latestTags = {}) => {
-            const nextTags = { ...latestTags };
-            if (Array.isArray(nextTags[hash])) {
-                const remainingTags = nextTags[hash].filter(currentTag => currentTag !== tag);
-                if (remainingTags.length > 0) {
-                    nextTags[hash] = remainingTags;
-                } else {
-                    delete nextTags[hash];
-                }
-            }
-            return nextTags;
-        });
-
-        return imageTagsByHash[hash] || [];
+        return store.removeImageTag(hash, tag);
     });
 
     ipcMain.handle('delete-image', async (event, imagePath) => {
@@ -610,7 +571,7 @@ function registerIpcHandlers(deps) {
                 config: {
                     tags: store.get('tags') || [],
                     categories: store.get('categories') || null,
-                    imageScoresByHash: store.get('imageScoresByHash') || {},
+                    imageScoresByHash: store.getAllImageScores(),
                     exportTime: new Date().toISOString(),
                     version: '1.0'
                 }
@@ -630,10 +591,10 @@ function registerIpcHandlers(deps) {
             const updates = {};
             if (config.tags && Array.isArray(config.tags)) updates.tags = config.tags;
             if (config.categories && Array.isArray(config.categories)) updates.categories = config.categories;
-            if (config.imageScoresByHash && typeof config.imageScoresByHash === 'object') {
-                updates.imageScoresByHash = config.imageScoresByHash;
-            }
             if (Object.keys(updates).length > 0) getStore().setMany(updates);
+            if (config.imageScoresByHash && typeof config.imageScoresByHash === 'object') {
+                getStore().replaceImageScores(config.imageScoresByHash);
+            }
             return { success: true };
         } catch (error) {
             console.error('Error importing config:', error);

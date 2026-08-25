@@ -59,6 +59,7 @@ function renderWaterfallPage() {
             </div>
         </section>
     `;
+    hydrateDisplayPreviews(imageGrid);
 }
 
 function renderFinishedWaterfallPage() {
@@ -166,7 +167,7 @@ function renderWaterfallCard(img, index) {
                 </div>
             </div>
             <div class="waterfall-image-frame" ${waterfallPageSize === 3 ? 'title="右键标记为 1 分"' : ''}>
-                <img class="waterfall-image" src="${escapeAttribute(toFileUrl(img.path))}" alt="${escapeAttribute(img.name)}">
+                <img class="waterfall-image" ${renderDisplayPreviewAttributes(img)} alt="${escapeAttribute(img.name)}">
             </div>
             <footer class="waterfall-card-footer" title="${escapeAttribute(img.name)}">
                 <span>${escapeHtml(img.name)}</span>

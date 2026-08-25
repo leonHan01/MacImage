@@ -244,7 +244,16 @@ async function deleteTag(tagName) {
         alert('删除图片标签失败: ' + result.error);
         return;
     }
-    imageTagsByHash = result.imageTagsByHash || {};
+    images.forEach((image) => {
+        const remainingTags = getImageTags(image).filter(tag => tag !== tagName);
+        image.tags = remainingTags;
+        if (!image.hash) return;
+        if (remainingTags.length > 0) {
+            imageTagsByHash[image.hash] = remainingTags;
+        } else {
+            delete imageTagsByHash[image.hash];
+        }
+    });
     
     selectedFilterTags = selectedFilterTags.filter(t => t !== tagName);
     

@@ -394,6 +394,82 @@ function rememberThumbnail(cacheKey, dataUrl) {
     }
 }
 
+function hydrateDisplayPreviews(container) {
+    if (!container) return;
+    container.querySelectorAll('img[data-preview-path]').forEach((previewImage) => {
+        const imagePath = previewImage.dataset.previewPath;
+        const size = Number(previewImage.dataset.previewSize) || DISPLAY_PREVIEW_SIZE;
+        const version = previewImage.dataset.previewVersion || '';
+        void getDisplayPreviewUrl(imagePath, size, version)
+            .then(url => applyDisplayPreview(previewImage, imagePath, url))
+            .catch(() => applyDisplayPreview(previewImage, imagePath, toFileUrl(imagePath)));
+    });
+}
+
+function getDisplayPreviewUrl(imagePath, size, version) {
+    const cacheKey = `${imagePath}:${size}:${version}`;
+    if (displayPreviewUrlCache.has(cacheKey)) {
+        const cachedUrl = displayPreviewUrlCache.get(cacheKey);
+        displayPreviewUrlCache.delete(cacheKey);
+        displayPreviewUrlCache.set(cacheKey, cachedUrl);
+        return Promise.resolve(cachedUrl);
+    }
+    if (pendingDisplayPreviews.has(cacheKey)) {
+        return pendingDisplayPreviews.get(cacheKey);
+    }
+
+    const request = enqueueDisplayPreviewRequest(imagePath, size)
+        .then((result) => {
+            if (!result || !result.success || !result.filePath) {
+                throw new Error(result?.error || '无法生成预览图');
+            }
+            const url = toFileUrl(result.filePath);
+            displayPreviewUrlCache.set(cacheKey, url);
+            while (displayPreviewUrlCache.size > DISPLAY_PREVIEW_URL_CACHE_LIMIT) {
+                displayPreviewUrlCache.delete(displayPreviewUrlCache.keys().next().value);
+            }
+            return url;
+        })
+        .finally(() => pendingDisplayPreviews.delete(cacheKey));
+    pendingDisplayPreviews.set(cacheKey, request);
+    return request;
+}
+
+function enqueueDisplayPreviewRequest(imagePath, size) {
+    const request = new Promise((resolve, reject) => {
+        displayPreviewRequestQueue.push({ imagePath, size, resolve, reject });
+    });
+    pumpDisplayPreviewQueue();
+    return request;
+}
+
+function pumpDisplayPreviewQueue() {
+    while (
+        displayPreviewActiveCount < DISPLAY_PREVIEW_LOAD_CONCURRENCY &&
+        displayPreviewRequestQueue.length > 0
+    ) {
+        const task = displayPreviewRequestQueue.shift();
+        displayPreviewActiveCount++;
+        window.electronAPI.getPreview(task.imagePath, task.size)
+            .then(task.resolve, task.reject)
+            .finally(() => {
+                displayPreviewActiveCount--;
+                pumpDisplayPreviewQueue();
+            });
+    }
+}
+
+function applyDisplayPreview(previewImage, imagePath, url) {
+    if (!previewImage.isConnected || previewImage.dataset.previewPath !== imagePath) return;
+    previewImage.src = url;
+    previewImage.classList.add('loaded');
+}
+
+function renderDisplayPreviewAttributes(img, size = DISPLAY_PREVIEW_SIZE) {
+    const version = `${img.size || 0}:${img.mtimeMs || ''}`;
+    return `data-preview-path="${escapeAttribute(img.path)}" data-preview-size="${size}" data-preview-version="${escapeAttribute(version)}" decoding="async"`;
+}
+
 function applyThumbnailResult(index, dataUrl, version) {
     if (version !== galleryRenderVersion || currentViewMode !== 'grid') return;
     const thumbnail = imageGrid.querySelector(`.thumbnail-image[data-thumb-index="${index}"]`);
