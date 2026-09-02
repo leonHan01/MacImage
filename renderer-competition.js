@@ -140,7 +140,7 @@ function renderCompetitionChoices(group) {
     bodyEl.innerHTML = group.map((img, index) => `
         <div class="competition-choice">
             <button class="competition-image-btn" data-choice-index="${index}" title="选择第 ${index + 1} 张">
-                <img ${renderDisplayPreviewAttributes(img)} alt="${escapeAttribute(img.name)}">
+                <img ${renderOriginalImageAttributes(img)} alt="${escapeAttribute(img.name)}">
             </button>
             <div class="competition-image-meta">
                 <strong title="${escapeAttribute(img.path)}">${escapeHtml(img.name)}</strong>
@@ -148,7 +148,6 @@ function renderCompetitionChoices(group) {
             </div>
         </div>
     `).join('');
-    hydrateDisplayPreviews(bodyEl);
 }
 
 async function chooseCompetitionWinner(choiceIndex) {

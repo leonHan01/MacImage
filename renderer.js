@@ -12,7 +12,7 @@ document.getElementById('toggleModalTagsBtn').addEventListener('click', toggleMo
 document.getElementById('showModalTagsBtn').addEventListener('click', () => setModalTagsExpanded(true));
 document.getElementById('modalPrev').addEventListener('click', showPrevImage);
 document.getElementById('modalNext').addEventListener('click', showNextImage);
-document.getElementById('addTagBtn').addEventListener('click', addNewTag);
+document.getElementById('addTagBtn').addEventListener('click', saveTagFromForm);
 document.getElementById('deleteBtn').addEventListener('click', deleteCurrentImage);
 document.getElementById('quickAddTagBtn').addEventListener('click', quickAddTag);
 document.getElementById('modalQuickAddTagBtn').addEventListener('click', modalQuickAddTag);
@@ -50,13 +50,13 @@ tagFilter.addEventListener('click', (event) => {
 
 const addCategoryBtn = document.getElementById('addCategoryBtn');
 if (addCategoryBtn) {
-    addCategoryBtn.addEventListener('click', addNewCategory);
+    addCategoryBtn.addEventListener('click', saveCategoryFromForm);
 }
 
 const newCategoryName = document.getElementById('newCategoryName');
 if (newCategoryName) {
     newCategoryName.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') addNewCategory();
+        if (e.key === 'Enter') saveCategoryFromForm();
     });
 }
 
@@ -162,7 +162,7 @@ if (zoomResetBtn) {
 }
 
 document.getElementById('newTagInput').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') addNewTag();
+    if (e.key === 'Enter') saveTagFromForm();
 });
 
 document.getElementById('quickTagInput').addEventListener('keypress', (e) => {

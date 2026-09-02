@@ -1,3 +1,5 @@
+let editingCategoryId = null;
+
 function openSettings() {
     renderTagList();
     renderCategoryList();
@@ -11,6 +13,8 @@ function openSettings() {
 }
 
 function closeSettings() {
+    cancelCategoryEdit();
+    cancelTagEdit();
     settingsModal.classList.remove('show');
 }
 
@@ -215,7 +219,7 @@ function getFolderDisplayName(folderPath) {
     return name || folderPath;
 }
 
-async function addNewCategory() {
+async function saveCategoryFromForm() {
     const nameInput = document.getElementById('newCategoryName');
     const iconSelect = document.getElementById('newCategoryIcon');
     
@@ -224,23 +228,19 @@ async function addNewCategory() {
     
     if (!name) return;
     
-    if (TAG_CATEGORIES.find(c => c.name === name)) {
+    const result = tagCatalog.saveCategory({
+        id: editingCategoryId,
+        name,
+        icon
+    });
+    if (!result.success && result.reason === 'duplicate-name') {
         alert('分类名称已存在');
         return;
     }
-    
-    const newCategory = {
-        id: generateCategoryId(),
-        name: name,
-        icon: icon
-    };
-    
-    TAG_CATEGORIES.push(newCategory);
+    if (!result.success) return;
+
     await window.electronAPI.saveCategories(TAG_CATEGORIES);
-    
-    nameInput.value = '';
-    if (iconSelect) iconSelect.value = '📌';
-    
+    cancelCategoryEdit();
     renderCategoryList();
     updateCategorySelects();
 }
@@ -254,13 +254,20 @@ function editCategory(categoryId) {
     
     nameInput.value = category.name;
     if (iconSelect) iconSelect.value = category.icon;
-    
-    TAG_CATEGORIES = TAG_CATEGORIES.filter(c => c.id !== categoryId);
-    window.electronAPI.saveCategories(TAG_CATEGORIES);
-    
-    renderCategoryList();
-    updateCategorySelects();
+    editingCategoryId = categoryId;
+    const saveButton = document.getElementById('addCategoryBtn');
+    if (saveButton) saveButton.textContent = '保存';
     nameInput.focus();
+}
+
+function cancelCategoryEdit() {
+    editingCategoryId = null;
+    const nameInput = document.getElementById('newCategoryName');
+    const iconSelect = document.getElementById('newCategoryIcon');
+    const saveButton = document.getElementById('addCategoryBtn');
+    if (nameInput) nameInput.value = '';
+    if (iconSelect) iconSelect.value = '📌';
+    if (saveButton) saveButton.textContent = '添加';
 }
 
 async function deleteCategory(categoryId) {
@@ -270,15 +277,9 @@ async function deleteCategory(categoryId) {
     if (!category) return;
     
     if (!confirm(`确定要删除分类 "${category.name}" 吗？该分类下的标签将移至"其他"分类。`)) return;
-    
-    allTags.forEach(tag => {
-        if (tag.category === categoryId) {
-            tag.category = 'other';
-        }
-    });
+    if (editingCategoryId === categoryId) cancelCategoryEdit();
+    tagCatalog.removeCategory(categoryId);
     await window.electronAPI.saveTags(allTags);
-    
-    TAG_CATEGORIES = TAG_CATEGORIES.filter(c => c.id !== categoryId);
     await window.electronAPI.saveCategories(TAG_CATEGORIES);
     
     renderCategoryList();

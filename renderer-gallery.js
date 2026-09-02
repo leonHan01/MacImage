@@ -7,14 +7,15 @@ function renderImages() {
     cancelGalleryWork();
     updateImageGridViewClass();
     
+    if (currentViewMode === 'waterfall') {
+        renderWaterfallPage();
+        return;
+    }
     if (filteredImages.length === 0) {
         renderEmptyImageGrid();
         return;
     }
-
-    if (currentViewMode === 'waterfall') {
-        renderWaterfallPage();
-    } else if (currentViewMode === 'grid') {
+    if (currentViewMode === 'grid') {
         renderVirtualGrid();
     } else {
         renderVirtualList();
@@ -40,7 +41,7 @@ function renderEmptyImageGrid() {
     updateImageGridViewClass();
     const isFolderEmpty = images.length === 0;
     const emptyMessage = currentViewMode === 'waterfall'
-        ? (waterfallLastStatus || '没有待评分的图片')
+        ? (waterfallSession.snapshot().status || '没有待评分的图片')
         : (isFolderEmpty ? '此文件夹中没有图片' : '没有匹配所选标签的图片');
     imageGrid.innerHTML = isFolderEmpty
         ? renderEmptyState('image', emptyMessage)
@@ -128,7 +129,7 @@ function setViewMode(mode) {
     currentViewMode = nextMode;
     if (currentViewMode === 'waterfall') {
         imageGrid.scrollTop = 0;
-        waterfallLastStatus = '';
+        waterfallSession.clearStatus();
     }
     localStorage.setItem('macimage:viewMode', currentViewMode);
     updateViewModeControls();
@@ -394,80 +395,8 @@ function rememberThumbnail(cacheKey, dataUrl) {
     }
 }
 
-function hydrateDisplayPreviews(container) {
-    if (!container) return;
-    container.querySelectorAll('img[data-preview-path]').forEach((previewImage) => {
-        const imagePath = previewImage.dataset.previewPath;
-        const size = Number(previewImage.dataset.previewSize) || DISPLAY_PREVIEW_SIZE;
-        const version = previewImage.dataset.previewVersion || '';
-        void getDisplayPreviewUrl(imagePath, size, version)
-            .then(url => applyDisplayPreview(previewImage, imagePath, url))
-            .catch(() => applyDisplayPreview(previewImage, imagePath, toFileUrl(imagePath)));
-    });
-}
-
-function getDisplayPreviewUrl(imagePath, size, version) {
-    const cacheKey = `${imagePath}:${size}:${version}`;
-    if (displayPreviewUrlCache.has(cacheKey)) {
-        const cachedUrl = displayPreviewUrlCache.get(cacheKey);
-        displayPreviewUrlCache.delete(cacheKey);
-        displayPreviewUrlCache.set(cacheKey, cachedUrl);
-        return Promise.resolve(cachedUrl);
-    }
-    if (pendingDisplayPreviews.has(cacheKey)) {
-        return pendingDisplayPreviews.get(cacheKey);
-    }
-
-    const request = enqueueDisplayPreviewRequest(imagePath, size)
-        .then((result) => {
-            if (!result || !result.success || !result.filePath) {
-                throw new Error(result?.error || '无法生成预览图');
-            }
-            const url = toFileUrl(result.filePath);
-            displayPreviewUrlCache.set(cacheKey, url);
-            while (displayPreviewUrlCache.size > DISPLAY_PREVIEW_URL_CACHE_LIMIT) {
-                displayPreviewUrlCache.delete(displayPreviewUrlCache.keys().next().value);
-            }
-            return url;
-        })
-        .finally(() => pendingDisplayPreviews.delete(cacheKey));
-    pendingDisplayPreviews.set(cacheKey, request);
-    return request;
-}
-
-function enqueueDisplayPreviewRequest(imagePath, size) {
-    const request = new Promise((resolve, reject) => {
-        displayPreviewRequestQueue.push({ imagePath, size, resolve, reject });
-    });
-    pumpDisplayPreviewQueue();
-    return request;
-}
-
-function pumpDisplayPreviewQueue() {
-    while (
-        displayPreviewActiveCount < DISPLAY_PREVIEW_LOAD_CONCURRENCY &&
-        displayPreviewRequestQueue.length > 0
-    ) {
-        const task = displayPreviewRequestQueue.shift();
-        displayPreviewActiveCount++;
-        window.electronAPI.getPreview(task.imagePath, task.size)
-            .then(task.resolve, task.reject)
-            .finally(() => {
-                displayPreviewActiveCount--;
-                pumpDisplayPreviewQueue();
-            });
-    }
-}
-
-function applyDisplayPreview(previewImage, imagePath, url) {
-    if (!previewImage.isConnected || previewImage.dataset.previewPath !== imagePath) return;
-    previewImage.src = url;
-    previewImage.classList.add('loaded');
-}
-
-function renderDisplayPreviewAttributes(img, size = DISPLAY_PREVIEW_SIZE) {
-    const version = `${img.size || 0}:${img.mtimeMs || ''}`;
-    return `data-preview-path="${escapeAttribute(img.path)}" data-preview-size="${size}" data-preview-version="${escapeAttribute(version)}" decoding="async"`;
+function renderOriginalImageAttributes(img) {
+    return `src="${escapeAttribute(toFileUrl(img.path))}" decoding="async"`;
 }
 
 function applyThumbnailResult(index, dataUrl, version) {
@@ -498,50 +427,20 @@ function getImageScore(img) {
 }
 
 function getImageRatingRecord(img) {
-    const value = img.hash && imageScoresByHash[img.hash] !== undefined
-        ? imageScoresByHash[img.hash]
-        : img.score;
-
-    if (value && typeof value === 'object') {
-        return {
-            rating: normalizeRatingNumber(value.rating, 1500),
-            wins: normalizeRatingNumber(value.wins, 0),
-            matches: normalizeRatingNumber(value.matches, 0)
-        };
-    }
-
-    const legacyWins = normalizeRatingNumber(value, 0);
-    return {
-        rating: 1500 + legacyWins,
-        wins: legacyWins,
-        matches: legacyWins
-    };
+    return MacImageRating.normalize(imageCollection.getScore(img));
 }
 
 function setImageRatingRecord(img, record) {
-    const nextRecord = {
-        rating: normalizeRatingNumber(record && record.rating, 1500),
-        wins: normalizeRatingNumber(record && record.wins, 0),
-        matches: normalizeRatingNumber(record && record.matches, 0)
-    };
-    img.score = nextRecord;
-    if (img.hash) {
-        imageScoresByHash[img.hash] = nextRecord;
-    }
+    const nextRecord = MacImageRating.normalize(record);
+    imageCollection.applyMetadata({ path: img.path, score: nextRecord });
 }
 
 function formatImageRating(img) {
-    const record = getImageRatingRecord(img);
-    return `${record.rating} 分 · ${record.wins}胜/${record.matches}场`;
+    return MacImageRating.format(getImageRatingRecord(img));
 }
 
 function getImageMatchCount(img) {
     return getImageRatingRecord(img).matches;
-}
-
-function normalizeRatingNumber(value, fallback) {
-    const numericValue = Number(value);
-    return Number.isFinite(numericValue) ? Math.max(0, Math.round(numericValue)) : fallback;
 }
 
 function renderImageScoreBadge(img) {

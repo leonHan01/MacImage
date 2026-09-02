@@ -5,10 +5,6 @@ const { test } = require('node:test');
 
 const registerIpcHandlers = require('../main-ipc-handlers');
 
-async function mapWithConcurrency(items, concurrency, mapper) {
-    return Promise.all(items.map(mapper));
-}
-
 function registerTestHandlers(store, overrides = {}) {
     const handlers = {};
     const ipcMain = { handle: (name, handler) => { handlers[name] = handler; } };
@@ -19,86 +15,68 @@ function registerTestHandlers(store, overrides = {}) {
         path,
         fsp: fs.promises,
         getMainWindow: () => null,
-        getStore: () => store,
-        getImageEntries: overrides.getImageEntries || (async () => []),
-        getImageRecord: overrides.getImageRecord || (async () => null),
-        hydrateImageRecord: overrides.hydrateImageRecord || (async () => null),
-        mapWithConcurrency,
-        getOrCreateImageHash: async imagePath => `hash:${path.basename(imagePath)}`,
-        getCachedThumbnail: async () => ({ success: true, dataUrl: 'thumbnail' }),
-        getCachedPreview: overrides.getCachedPreview,
-        calculateFullFileHash: async () => 'full-hash',
-        getAvailablePath: async filePath => filePath,
-        reserveAvailablePath: async filePath => filePath,
-        getTimestampedPath: async filePath => filePath,
-        getNumberedPath: async filePath => filePath,
-        moveFileSafely: async () => {},
-        pathExists: async () => false,
+        store,
+        imageLibrary: {
+            readDirectory: overrides.readDirectory || (async () => []),
+            getHash: async imagePath => `hash:${path.basename(imagePath)}`,
+            getThumbnail: async () => ({ dataUrl: 'thumbnail', cached: true }),
+            findDuplicates: async () => ({ groups: [], failures: [] }),
+            listEntries: async () => []
+        },
+        imageFileOperations: {
+            moveMany: async () => ({ moved: [], failures: [] }),
+            moveOne: async () => ({ success: true, moved: false }),
+            trashOne: async () => ({ success: true }),
+            trashMany: async () => ({ deleted: [], failures: [] }),
+            restore: async () => ({ success: false }),
+            inspectTrash: async () => ({ count: 0, size: 0, path: null }),
+            emptyTrash: async () => ({ success: true, deletedCount: 0 })
+        },
+        fileOperations: {
+            getAvailablePath: async filePath => filePath,
+            reserveAvailablePath: async filePath => filePath,
+            getTimestampedPath: async filePath => filePath,
+            getNumberedPath: async filePath => filePath,
+            moveFileSafely: async () => {},
+            pathExists: async () => false
+        },
         moveHashMapping: () => {},
         moveHashMappings: () => {},
-        imageScanConcurrency: 2,
         getServerDownloadDirectory: () => '/tmp'
     });
     return handlers;
 }
 
-test('directory IPC queries and returns metadata for the current folder only', async () => {
-    const queriedDirectories = [];
-    const queriedHashes = [];
-    const store = {
-        getPathHashesForDirectory: (directory) => {
-            queriedDirectories.push(directory);
-            return {
-                '/photos/one.jpg': { hash: 'hash-one', size: 10, mtimeMs: 100 }
-            };
-        },
-        getImageMetadataForHashes: (hashes) => {
-            queriedHashes.push(...hashes);
-            return {
-                'hash-one': {
-                    tags: ['favorite'],
-                    score: { rating: 1520, wins: 1, matches: 2 }
-                }
-            };
+test('directory IPC delegates scanning and forwards metadata batches', async () => {
+    const sent = [];
+    const handlers = registerTestHandlers({}, {
+        readDirectory: async (directory, { onMetadata }) => {
+            onMetadata([{ path: `${directory}/one.jpg`, hash: 'hash-one' }]);
+            return [{ path: `${directory}/one.jpg`, hash: 'hash-one' }];
         }
-    };
-    const handlers = registerTestHandlers(store, {
-        getImageEntries: async () => [{ name: 'one.jpg' }],
-        getImageRecord: async (directory, name, pathHashes) => ({
-            name,
-            path: path.join(directory, name),
-            hash: pathHashes[path.join(directory, name)].hash,
-            tags: [],
-            score: null
-        })
     });
 
-    const result = await handlers['read-directory']({ sender: { isDestroyed: () => false } }, '/photos');
+    const result = await handlers['read-directory']({
+        sender: {
+            isDestroyed: () => false,
+            send: (channel, payload) => sent.push({ channel, payload })
+        }
+    }, '/photos');
 
-    assert.deepEqual(queriedDirectories, ['/photos']);
-    assert.deepEqual(queriedHashes, ['hash-one']);
-    assert.deepEqual(result[0].tags, ['favorite']);
-    assert.deepEqual(result[0].score, { rating: 1520, wins: 1, matches: 2 });
+    assert.deepEqual(result, [{ path: '/photos/one.jpg', hash: 'hash-one' }]);
+    assert.deepEqual(sent, [{
+        channel: 'directory-image-metadata',
+        payload: {
+            dirPath: '/photos',
+            updates: [{ path: '/photos/one.jpg', hash: 'hash-one' }]
+        }
+    }]);
 });
 
-test('preview IPC returns a cache file path without embedding image bytes', async () => {
-    let request = null;
-    const handlers = registerTestHandlers({}, {
-        getCachedPreview: async (imagePath, size) => {
-            request = { imagePath, size };
-            return { success: true, filePath: '/cache/hash-preview-1600.png', cached: true };
-        }
-    });
+test('does not expose a persistent large-preview cache IPC', () => {
+    const handlers = registerTestHandlers({});
 
-    const result = await handlers['get-preview']({}, '/photos/one.jpg', 1600);
-
-    assert.deepEqual(request, { imagePath: '/photos/one.jpg', size: 1600 });
-    assert.deepEqual(result, {
-        success: true,
-        filePath: '/cache/hash-preview-1600.png',
-        cached: true
-    });
-    assert.equal('dataUrl' in result, false);
+    assert.equal(handlers['get-preview'], undefined);
 });
 
 test('competition IPC writes and returns only changed score records', async () => {

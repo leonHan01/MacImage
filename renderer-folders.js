@@ -26,28 +26,9 @@ function scheduleDirectoryMetadataRender() {
 function applyDirectoryMetadataUpdates() {
     if (isFolderLoading || pendingDirectoryMetadataUpdates.size === 0) return;
 
-    const imagesByPath = new Map(images.map(img => [img.path, img]));
-    let hasChanges = false;
-
-    pendingDirectoryMetadataUpdates.forEach((update, imagePath) => {
-        const image = imagesByPath.get(imagePath);
-        if (!image || !update.hash) return;
-
-        image.hash = update.hash;
-        image.tags = Array.isArray(update.tags) ? update.tags : [];
-        image.score = update.score ?? null;
-        if (image.tags.length > 0) {
-            imageTagsByHash[update.hash] = image.tags;
-        } else {
-            delete imageTagsByHash[update.hash];
-        }
-        if (update.score !== null && update.score !== undefined) {
-            imageScoresByHash[update.hash] = update.score;
-        } else {
-            delete imageScoresByHash[update.hash];
-        }
-        hasChanges = true;
-    });
+    const hasChanges = imageCollection.applyMetadata(
+        [...pendingDirectoryMetadataUpdates.values()].filter(update => update?.hash)
+    ) > 0;
     pendingDirectoryMetadataUpdates.clear();
 
     if (hasChanges) {
@@ -74,13 +55,20 @@ async function init() {
 }
 
 async function loadSavedSettings() {
-    const savedCategories = await window.electronAPI.getCategories();
-    if (savedCategories && savedCategories.length > 0) {
-        TAG_CATEGORIES = savedCategories;
+    const [savedCategories, savedTags] = await Promise.all([
+        window.electronAPI.getCategories(),
+        window.electronAPI.getTags()
+    ]);
+    const normalized = tagCatalog.load({
+        categories: savedCategories,
+        tags: savedTags
+    });
+    if (normalized.categoriesChanged) {
+        await window.electronAPI.saveCategories(TAG_CATEGORIES);
     }
-    
-    allTags = await window.electronAPI.getTags() || [];
-    await normalizeTags();
+    if (normalized.tagsChanged) {
+        await window.electronAPI.saveTags(allTags);
+    }
 
     trashFolder = await window.electronAPI.getTrashFolder();
     serverDownloadFolder = await window.electronAPI.getServerDownloadFolder();
@@ -101,70 +89,18 @@ async function loadRecentOpenFiles() {
     return normalizeRecentOpenFiles(savedFiles);
 }
 
-async function normalizeTags() {
-    let needsSave = ensureDefaultTagsInMemory();
-    const usedShortcuts = new Set();
-
-    allTags.forEach(tag => {
-        if (!tag.color) {
-            tag.color = generateRandomColor();
-            needsSave = true;
-        }
-        if (!tag.category) {
-            tag.category = 'other';
-            needsSave = true;
-        }
-        const normalizedShortcut = normalizeShortcut(tag.shortcut);
-        if ((tag.shortcut || '') !== normalizedShortcut) {
-            tag.shortcut = normalizedShortcut;
-            needsSave = true;
-        }
-        if (tag.shortcut) {
-            if (getReservedShortcutLabel(tag.shortcut) || usedShortcuts.has(tag.shortcut)) {
-                tag.shortcut = '';
-                needsSave = true;
-            } else {
-                usedShortcuts.add(tag.shortcut);
-            }
-        }
-    });
-    if (needsSave) {
-        await window.electronAPI.saveTags(allTags);
-    }
-}
-
-function ensureDefaultTagsInMemory() {
-    let needsSave = false;
-
-    DEFAULT_TAGS.forEach(defaultTag => {
-        const existingTag = allTags.find(tag => tag.name === defaultTag.name);
-        if (!existingTag) {
-            allTags.push({ ...defaultTag });
-            needsSave = true;
-            return;
-        }
-
-        if (!existingTag.color) {
-            existingTag.color = defaultTag.color;
-            needsSave = true;
-        }
-        if (!existingTag.category) {
-            existingTag.category = defaultTag.category;
-            needsSave = true;
-        }
-    });
-
-    return needsSave;
-}
-
 async function ensureDefaultTags() {
-    const needsSave = ensureDefaultTagsInMemory();
-    if (needsSave) {
+    const normalized = tagCatalog.ensureDefaults();
+    if (normalized.tagsChanged) {
         await window.electronAPI.saveTags(allTags);
         renderTagFilter();
         updateCategorySelects();
     }
-    return needsSave;
+    if (normalized.categoriesChanged) {
+        await window.electronAPI.saveCategories(TAG_CATEGORIES);
+        updateCategorySelects();
+    }
+    return normalized.tagsChanged || normalized.categoriesChanged;
 }
 
 function renderInitialState() {
@@ -243,8 +179,7 @@ async function loadFolder(folderPath, options = {}) {
             window.electronAPI.getWaterfallPendingPaths()
         ]);
         const pendingPathSet = new Set(Array.isArray(pendingWaterfallPaths) ? pendingWaterfallPaths : []);
-        images = folderImages.filter(img => !pendingPathSet.has(img.path));
-        rebuildCurrentImageMetadataIndexes(images);
+        imageCollection.replace(folderImages.filter(img => !pendingPathSet.has(img.path)));
     } finally {
         isFolderLoading = false;
     }
@@ -257,29 +192,25 @@ async function loadFolder(folderPath, options = {}) {
         deleteHistory = [];
     }
     updateOpenCurrentFolderButton();
+    refreshAfterImageMembershipChange();
+    scheduleDirectoryMetadataRender();
+}
+
+function refreshAfterImageMembershipChange() {
+    if (duplicateScanCompleted) {
+        const activePaths = new Set(images.map(image => image.path));
+        const removedPaths = duplicateGroups
+            .flatMap(group => group.images)
+            .map(image => image.path)
+            .filter(imagePath => !activePaths.has(imagePath));
+        duplicateGroups = removePathsFromDuplicateGroups(removedPaths);
+    }
     renderImages();
     updateImageCount();
     updateMigrateSourceFolder();
     renderTagFilter();
     renderDuplicateResults();
     updateCompetitionLauncherState();
-    scheduleDirectoryMetadataRender();
-}
-
-function rebuildCurrentImageMetadataIndexes(imageList) {
-    const nextTagsByHash = {};
-    const nextScoresByHash = {};
-    (Array.isArray(imageList) ? imageList : []).forEach((image) => {
-        if (!image || !image.hash) return;
-        if (Array.isArray(image.tags) && image.tags.length > 0) {
-            nextTagsByHash[image.hash] = image.tags;
-        }
-        if (image.score !== null && image.score !== undefined) {
-            nextScoresByHash[image.hash] = image.score;
-        }
-    });
-    imageTagsByHash = nextTagsByHash;
-    imageScoresByHash = nextScoresByHash;
 }
 
 async function openCurrentFolderInFinder() {
@@ -473,10 +404,7 @@ function updateMigrateButtonState() {
 }
 
 function getImageTags(img) {
-    if (img.hash && imageTagsByHash[img.hash]) {
-        return imageTagsByHash[img.hash];
-    }
-    return img.tags || [];
+    return imageCollection.getTags(img);
 }
 
 function formatFileSize(bytes) {

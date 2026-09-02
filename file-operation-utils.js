@@ -18,6 +18,26 @@ function createFileOperationUtils({
         }
     }
 
+    async function pathExists(filePath) {
+        try {
+            await fsp.access(filePath);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async function getAvailablePath(filePath, buildCandidate) {
+        if (!(await pathExists(filePath))) return filePath;
+
+        let counter = 1;
+        let candidate = buildCandidate(counter);
+        while (await pathExists(candidate)) {
+            candidate = buildCandidate(++counter);
+        }
+        return candidate;
+    }
+
     async function reserveAvailablePath(filePath, buildCandidate) {
         let counter = 1;
         let candidate = filePath;
@@ -83,7 +103,9 @@ function createFileOperationUtils({
         reserveAvailablePath,
         moveFileSafely,
         getTimestampedPath,
-        getNumberedPath
+        getNumberedPath,
+        getAvailablePath,
+        pathExists
     };
 }
 

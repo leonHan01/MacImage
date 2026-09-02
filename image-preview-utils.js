@@ -45,9 +45,8 @@ function getPreviewDecoder(filePath, detectedFormat) {
     return allowedExtensions.has(extension) ? 'native' : 'sips';
 }
 
-function getImageCacheFileName(hash, size, kind) {
-    const cacheKind = kind === 'thumbnail' ? 'thumbnail' : 'preview';
-    return `${hash}-${cacheKind}-v${IMAGE_CACHE_VERSION}-${size}.png`;
+function getImageCacheFileName(hash, size) {
+    return `${hash}-thumbnail-v${IMAGE_CACHE_VERSION}-${size}.png`;
 }
 
 async function readImageFormat(filePath) {

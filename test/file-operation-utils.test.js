@@ -76,3 +76,22 @@ test('falls back from EXDEV without losing or overwriting the source', async () 
         await rm(tempDir, { recursive: true, force: true });
     }
 });
+
+test('finds the next available path without reserving a file', async () => {
+    const tempDir = await mkdtemp(TEMP_ROOT);
+    try {
+        await writeFile(path.join(tempDir, 'photo.jpg'), 'existing');
+        await writeFile(path.join(tempDir, 'photo_1.jpg'), 'existing');
+        const { getAvailablePath } = createFileOperationUtils({ fsp: fs.promises, path });
+
+        const availablePath = await getAvailablePath(
+            path.join(tempDir, 'photo.jpg'),
+            counter => path.join(tempDir, `photo_${counter}.jpg`)
+        );
+
+        assert.equal(availablePath, path.join(tempDir, 'photo_2.jpg'));
+        assert.equal(await pathExists(availablePath), false);
+    } finally {
+        await rm(tempDir, { recursive: true, force: true });
+    }
+});

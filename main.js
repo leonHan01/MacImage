@@ -2,23 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, shell } = requir
 const path = require('path');
 const fs = require('fs');
 const Store = require('./store');
-const { calculateFileHash, calculateFileHashSync, calculateFullFileHash } = require('./hashUtils');
+const { calculateFileHashSync } = require('./hashUtils');
+const { createImageLibrary, isSupportedImageFile } = require('./image-library');
 const { createFileOperationUtils } = require('./file-operation-utils');
-const {
-    createResizedImageWithSips,
-    getImageCacheFileName,
-    getPreviewDecoder,
-    readImageFormat
-} = require('./image-preview-utils');
+const { createImageFileOperations } = require('./image-file-operations');
+const { mapWithConcurrency } = require('./async-utils');
 const registerIpcHandlers = require('./main-ipc-handlers');
 
 const fsp = fs.promises;
-const {
-    reserveAvailablePath,
-    moveFileSafely,
-    getTimestampedPath,
-    getNumberedPath
-} = createFileOperationUtils({ fsp, path });
+const fileOperations = createFileOperationUtils({ fsp, path });
 
 let mainWindow;
 let store;
@@ -27,251 +19,11 @@ let rendererReady = false;
 let ipcServices = null;
 let isQuittingAfterWaterfallCleanup = false;
 let waterfallQuitCleanupStarted = false;
-const pendingHashCalculations = new Map();
-const pendingImageCacheGenerations = new Map();
 
 const userDataPath = app.getPath('userData');
 const storePath = path.join(userDataPath, 'macimage.db');
 const legacyStorePath = path.join(userDataPath, 'config.json');
 const thumbnailCacheDir = path.join(app.getPath('userData'), 'thumbnails');
-const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.heic', '.heif'];
-const IMAGE_SCAN_CONCURRENCY = 8;
-const DEFAULT_THUMBNAIL_SIZE = 220;
-const DEFAULT_PREVIEW_SIZE = 1600;
-
-function isSupportedImageFile(filePath) {
-    return IMAGE_EXTENSIONS.includes(path.extname(filePath).toLowerCase());
-}
-
-async function pathExists(filePath) {
-    try {
-        await fsp.access(filePath);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-async function getImageEntries(dirPath) {
-    const entries = await fsp.readdir(dirPath, { withFileTypes: true });
-    return entries.filter(entry => (
-        entry.isFile() &&
-        !entry.name.startsWith('.') &&
-        isSupportedImageFile(entry.name)
-    ));
-}
-
-function getHashCacheEntry(value) {
-    if (typeof value === 'string' && value) {
-        return { hash: value, size: null, mtimeMs: null };
-    }
-
-    if (value && typeof value === 'object' && typeof value.hash === 'string' && value.hash) {
-        return {
-            hash: value.hash,
-            size: Number.isFinite(value.size) ? value.size : null,
-            mtimeMs: Number.isFinite(value.mtimeMs) ? value.mtimeMs : null
-        };
-    }
-
-    return null;
-}
-
-function createHashCacheEntry(hash, stats) {
-    return {
-        hash,
-        size: stats.size,
-        mtimeMs: stats.mtimeMs
-    };
-}
-
-function getCachedHashForStats(pathToHash, imagePath, stats) {
-    const entry = getHashCacheEntry(pathToHash[imagePath]);
-    if (!entry || entry.size !== stats.size || entry.mtimeMs !== stats.mtimeMs) {
-        return null;
-    }
-    return entry.hash;
-}
-
-async function calculateHashForStats(imagePath, stats) {
-    const key = `${imagePath}\u0000${stats.size}\u0000${stats.mtimeMs}`;
-    if (!pendingHashCalculations.has(key)) {
-        const task = calculateFileHash(imagePath).finally(() => {
-            pendingHashCalculations.delete(key);
-        });
-        pendingHashCalculations.set(key, task);
-    }
-    return pendingHashCalculations.get(key);
-}
-
-async function getImageRecord(dirPath, fileName, pathToHash) {
-    const fullPath = path.join(dirPath, fileName);
-
-    try {
-        const stats = await fsp.stat(fullPath);
-        const hash = getCachedHashForStats(pathToHash, fullPath, stats);
-
-        return {
-            name: fileName,
-            path: fullPath,
-            size: stats.size,
-            modifiedTime: stats.mtime,
-            mtimeMs: stats.mtimeMs,
-            hash,
-            tags: [],
-            score: null
-        };
-    } catch (err) {
-        console.error('Failed to read image:', fullPath, err.message);
-        return null;
-    }
-}
-
-async function hydrateImageRecord(record, metadataStore, updatedPathToHash) {
-    try {
-        const stats = { size: record.size, mtimeMs: record.mtimeMs };
-        const hash = await calculateHashForStats(record.path, stats);
-        updatedPathToHash[record.path] = createHashCacheEntry(hash, stats);
-        const metadata = metadataStore.getImageMetadata(hash);
-        return {
-            path: record.path,
-            hash,
-            tags: metadata.tags,
-            score: metadata.score
-        };
-    } catch (err) {
-        console.error('Failed to calculate image hash:', record.path, err.message);
-        return null;
-    }
-}
-
-async function mapWithConcurrency(items, concurrency, mapper) {
-    const results = [];
-    let nextIndex = 0;
-
-    async function worker() {
-        while (nextIndex < items.length) {
-            const currentIndex = nextIndex++;
-            results[currentIndex] = await mapper(items[currentIndex], currentIndex);
-        }
-    }
-
-    const workerCount = Math.min(concurrency, items.length);
-    await Promise.all(Array.from({ length: workerCount }, worker));
-    return results;
-}
-
-async function getOrCreateImageHash(imagePath) {
-    const stats = await fsp.stat(imagePath);
-    const cachedEntry = store.getPathHash(imagePath);
-    let hash = getCachedHashForStats({ [imagePath]: cachedEntry }, imagePath, stats);
-
-    if (!hash) {
-        hash = await calculateHashForStats(imagePath, stats);
-        store.setPathHash(imagePath, createHashCacheEntry(hash, stats));
-    }
-
-    return hash;
-}
-
-function normalizeThumbnailSize(size) {
-    const parsed = Number(size);
-    if (!Number.isFinite(parsed)) {
-        return DEFAULT_THUMBNAIL_SIZE;
-    }
-    return Math.min(Math.max(Math.round(parsed), 80), 512);
-}
-
-function getThumbnailCachePath(hash, size) {
-    return path.join(thumbnailCacheDir, getImageCacheFileName(hash, size, 'thumbnail'));
-}
-
-function getPreviewCachePath(hash, size) {
-    return path.join(thumbnailCacheDir, getImageCacheFileName(hash, size, 'preview'));
-}
-
-async function readThumbnailDataUrl(cachePath) {
-    const buffer = await fsp.readFile(cachePath);
-    return `data:image/png;base64,${buffer.toString('base64')}`;
-}
-
-async function getCachedThumbnail(imagePath, requestedSize = DEFAULT_THUMBNAIL_SIZE) {
-    const size = normalizeThumbnailSize(requestedSize);
-    const hash = await getOrCreateImageHash(imagePath);
-    if (!hash) {
-        return { success: false, error: '无法计算图片 hash' };
-    }
-
-    const cachePath = getThumbnailCachePath(hash, size);
-    const cached = await ensureCachedImage(imagePath, cachePath, size, '无法生成缩略图');
-    return { success: true, dataUrl: await readThumbnailDataUrl(cachePath), cached };
-}
-
-async function getCachedPreview(imagePath, requestedSize = DEFAULT_PREVIEW_SIZE) {
-    const size = normalizePreviewSize(requestedSize);
-    const hash = await getOrCreateImageHash(imagePath);
-    if (!hash) {
-        return { success: false, error: '无法计算图片 hash' };
-    }
-
-    const cachePath = getPreviewCachePath(hash, size);
-    const cached = await ensureCachedImage(imagePath, cachePath, size, '无法生成预览图');
-    return { success: true, filePath: cachePath, cached };
-}
-
-async function ensureCachedImage(imagePath, cachePath, size, emptyImageError) {
-    if (await pathExists(cachePath)) return true;
-
-    if (!pendingImageCacheGenerations.has(cachePath)) {
-        const generation = generateCachedImage(imagePath, cachePath, size, emptyImageError)
-            .finally(() => pendingImageCacheGenerations.delete(cachePath));
-        pendingImageCacheGenerations.set(cachePath, generation);
-    }
-    await pendingImageCacheGenerations.get(cachePath);
-    return false;
-}
-
-async function generateCachedImage(imagePath, cachePath, size, emptyImageError) {
-    await fsp.mkdir(thumbnailCacheDir, { recursive: true });
-    const detectedFormat = await readImageFormat(imagePath);
-    if (getPreviewDecoder(imagePath, detectedFormat) === 'sips') {
-        await createResizedImageWithSips(imagePath, cachePath, size);
-        return;
-    }
-
-    const image = await nativeImage.createThumbnailFromPath(imagePath, {
-        width: size,
-        height: size
-    });
-    if (!image || image.isEmpty()) {
-        throw new Error(emptyImageError);
-    }
-    await fsp.writeFile(cachePath, image.toPNG());
-}
-
-function normalizePreviewSize(size) {
-    const parsed = Number(size);
-    if (!Number.isFinite(parsed)) return DEFAULT_PREVIEW_SIZE;
-    return Math.min(Math.max(Math.round(parsed), 640), 2560);
-}
-
-async function getAvailablePath(filePath, buildCandidate) {
-    if (!(await pathExists(filePath))) {
-        return filePath;
-    }
-
-    let counter = 1;
-    let candidate = buildCandidate(counter);
-    while (await pathExists(candidate)) {
-        counter++;
-        candidate = buildCandidate(counter);
-    }
-    return candidate;
-}
-
-function moveHashMapping(fromPath, toPath) {
-    moveHashMappings([{ fromPath, toPath }]);
-}
 
 function moveHashMappings(moves) {
     if (!Array.isArray(moves) || moves.length === 0) return;
@@ -463,7 +215,11 @@ function migrateOldData() {
                 if (fs.existsSync(imagePath)) {
                     const hash = calculateFileHashSync(imagePath);
                     const stats = fs.statSync(imagePath);
-                    newPathToHash[imagePath] = createHashCacheEntry(hash, stats);
+                    newPathToHash[imagePath] = {
+                        hash,
+                        size: stats.size,
+                        mtimeMs: stats.mtimeMs
+                    };
                     (Array.isArray(oldImageTags[imagePath]) ? oldImageTags[imagePath] : [])
                         .forEach(tag => store.addImageTag(hash, tag));
                 }
@@ -478,34 +234,6 @@ function migrateOldData() {
     }
 }
 
-ipcServices = registerIpcHandlers({
-    ipcMain,
-    dialog,
-    shell,
-    path,
-    fsp,
-    getMainWindow: () => mainWindow,
-    getStore: () => store,
-    getImageEntries,
-    getImageRecord,
-    hydrateImageRecord,
-    mapWithConcurrency,
-    getOrCreateImageHash,
-    calculateFullFileHash,
-    getCachedThumbnail,
-    getCachedPreview,
-    getAvailablePath,
-    reserveAvailablePath,
-    getTimestampedPath,
-    getNumberedPath,
-    moveFileSafely,
-    pathExists,
-    moveHashMapping,
-    moveHashMappings,
-    imageScanConcurrency: IMAGE_SCAN_CONCURRENCY,
-    getServerDownloadDirectory: () => path.join(app.getPath('userData'), 'server-downloads')
-});
-
 app.whenReady().then(() => {
     if (!gotSingleInstanceLock) {
         return;
@@ -513,6 +241,34 @@ app.whenReady().then(() => {
 
     store = new Store(storePath, { legacyFilePath: legacyStorePath });
     migrateOldData();
+    const imageLibrary = createImageLibrary({
+        store,
+        nativeImage,
+        thumbnailCacheDir,
+        fsp,
+        path
+    });
+    const imageFileOperations = createImageFileOperations({
+        fsp,
+        path,
+        fileOperations,
+        mapWithConcurrency,
+        moveHashMappings,
+        listImageEntries: directory => imageLibrary.listEntries(directory)
+    });
+    ipcServices = registerIpcHandlers({
+        ipcMain,
+        dialog,
+        shell,
+        path,
+        fsp,
+        getMainWindow: () => mainWindow,
+        store,
+        imageLibrary,
+        imageFileOperations,
+        fileOperations,
+        getServerDownloadDirectory: () => path.join(app.getPath('userData'), 'server-downloads')
+    });
     createWindow();
     getImageFilesFromArgv(process.argv).forEach(openImageFromSystem);
 

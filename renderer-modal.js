@@ -136,10 +136,6 @@ async function toggleModalImageTag(imagePath, tagName, options = {}) {
     }
 
     const updatedImg = images.find(i => i.path === imagePath);
-    if (updatedImg && updatedImg.hash) {
-        updatedImg.tags = imageTagsByHash[updatedImg.hash] || [];
-    }
-
     renderModalTagList(updatedImg);
     renderImages();
     renderTagFilter();
@@ -193,10 +189,7 @@ async function toggleHeartTagForCurrentImage(e, options = {}) {
         return;
     }
 
-    if (img.hash) {
-        imageTagsByHash[img.hash] = nextTags;
-    }
-    img.tags = nextTags;
+    imageCollection.applyMetadata({ path: img.path, tags: nextTags });
 
     showHeartFeedback(!hasHeart);
     renderModalTagList(img);
@@ -385,8 +378,8 @@ async function deleteCurrentImage() {
 function handleDeletedImage(result, img) {
     recordFileOperation([createDeleteHistoryItem(result, img, currentImageIndex)]);
 
-    images = images.filter(i => i.path !== img.path);
-    refreshAfterImageRemoval(img.path);
+    imageCollection.remove(img.path);
+    refreshAfterImageRemoval();
 }
 
 function createDeleteHistoryItem(result, img = null, index = -1) {
@@ -409,23 +402,17 @@ function recordFileOperation(items) {
     }
 }
 
-function refreshAfterImageRemoval(removedPath) {
-    if (duplicateScanCompleted) {
-        duplicateGroups = removePathsFromDuplicateGroups(removedPath ? [removedPath] : []);
-    }
+function refreshAfterImageRemoval() {
+    refreshAfterImageMembershipChange();
 
     if (images.length === 0) {
         closeModal();
     } else {
-        renderImages();
         if (currentImageIndex >= sortedImages.length) {
             currentImageIndex = sortedImages.length - 1;
         }
         updateModalImage();
     }
-
-    updateImageCount();
-    renderDuplicateResults();
 }
 
 async function undoLastDelete() {
@@ -525,7 +512,7 @@ function handleKeyboard(e) {
         if (e.key === 'ArrowDown' || isUnmodifiedSpace) {
             e.preventDefault();
             if (!e.repeat) void advanceWaterfallPage();
-        } else if (e.key === 'ArrowUp' && waterfallPageSize === 3) {
+        } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             if (!e.repeat) void restorePreviousWaterfallPage();
         }

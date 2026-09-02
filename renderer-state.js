@@ -1,8 +1,6 @@
-let images = [];
+const imageCollection = MacImageCollection.create();
+const images = imageCollection.items;
 let currentImageIndex = -1;
-let allTags = [];
-let imageTagsByHash = {};
-let imageScoresByHash = {};
 let selectedFilterTags = [];
 let filterNoTag = false;
 let trashFolder = null;
@@ -37,26 +35,9 @@ let thumbnailQueue = [];
 let thumbnailQueuedIndexes = new Set();
 let thumbnailActiveCount = 0;
 let thumbnailMemoryCache = new Map();
-let displayPreviewUrlCache = new Map();
-let pendingDisplayPreviews = new Map();
-let displayPreviewRequestQueue = [];
-let displayPreviewActiveCount = 0;
-let waterfallScores = new Map();
-let waterfallBatchNumber = 1;
-let waterfallProcessedCount = 0;
-let waterfallMovedCount = 0;
-let waterfallMovedSize = 0;
-let waterfallDeletedCount = 0;
-let waterfallDeletedSize = 0;
-let waterfallLastStatus = '';
-let waterfallIsProcessing = false;
-let waterfallPendingPages = [];
-let waterfallRestoredPagePaths = null;
-let waterfallWheelDelta = 0;
-let lastWaterfallWheelTime = 0;
 let closeModalOnImageClick = false;
 const savedWaterfallPageSize = Number(localStorage.getItem('macimage:waterfallPageSize'));
-let waterfallPageSize = [3, 10].includes(savedWaterfallPageSize) ? savedWaterfallPageSize : 3;
+const initialWaterfallPageSize = [3, 10].includes(savedWaterfallPageSize) ? savedWaterfallPageSize : 3;
 
 const WHEEL_NAVIGATION_COOLDOWN_MS = 220;
 const FAVORITE_IMAGE_SHORTCUT = 'f';
@@ -68,9 +49,6 @@ const RESERVED_TAG_SHORTCUTS = {
 const THUMBNAIL_SIZE = 220;
 const THUMBNAIL_LOAD_CONCURRENCY = 6;
 const THUMBNAIL_MEMORY_CACHE_LIMIT = 350;
-const DISPLAY_PREVIEW_SIZE = 1600;
-const DISPLAY_PREVIEW_URL_CACHE_LIMIT = 200;
-const DISPLAY_PREVIEW_LOAD_CONCURRENCY = 4;
 const GRID_MIN_CARD_WIDTH = 168;
 const GRID_GAP = 14;
 const GRID_PADDING = 14;
@@ -117,7 +95,6 @@ const CATEGORY_ICON_OPTIONS = [
     ['🌙', '月亮'], ['💎', '钻石'], ['🔑', '钥匙'], ['💡', '灯泡']
 ];
 
-let TAG_CATEGORIES = [...DEFAULT_CATEGORIES];
 let quickOpenFolders = [...DEFAULT_QUICK_OPEN_FOLDERS];
 let recentOpenFiles = [];
 
@@ -132,26 +109,22 @@ function generateRandomColor() {
     return colors[Math.floor(Math.random() * colors.length)];
 }
 
+const tagCatalog = MacImageTagCatalog.create({
+    defaultTags: DEFAULT_TAGS,
+    defaultCategories: DEFAULT_CATEGORIES,
+    reservedShortcuts: RESERVED_TAG_SHORTCUTS,
+    colorFactory: generateRandomColor,
+    idFactory: generateCategoryId
+});
+const allTags = tagCatalog.tags;
+const TAG_CATEGORIES = tagCatalog.categories;
+
 function getCategoryById(categoryId) {
-    return TAG_CATEGORIES.find(c => c.id === categoryId) || TAG_CATEGORIES.find(c => c.id === 'other') || TAG_CATEGORIES[TAG_CATEGORIES.length - 1];
+    return tagCatalog.getCategory(categoryId);
 }
 
 function getTagsByCategory() {
-    const grouped = {};
-    TAG_CATEGORIES.forEach(cat => {
-        grouped[cat.id] = [];
-    });
-    allTags.forEach(tag => {
-        const catId = tag.category || 'other';
-        if (grouped[catId]) {
-            grouped[catId].push(tag);
-        } else {
-            if (grouped['other']) {
-                grouped['other'].push(tag);
-            }
-        }
-    });
-    return grouped;
+    return tagCatalog.groupTags();
 }
 
 function generateCategoryId() {
@@ -186,9 +159,7 @@ function normalizeShortcut(value) {
 }
 
 function getTagByShortcut(shortcut) {
-    const normalized = normalizeShortcut(shortcut);
-    if (!normalized) return null;
-    return allTags.find(tag => normalizeShortcut(tag.shortcut) === normalized) || null;
+    return tagCatalog.getTagByShortcut(shortcut);
 }
 
 function getReservedShortcutLabel(shortcut) {

@@ -105,7 +105,7 @@ async function importConfig() {
     const importResult = await window.electronAPI.importConfig(config);
     
     if (importResult.success) {
-        applyImportedConfig(config);
+        await applyImportedConfig(config);
         alert('配置已成功导入');
     } else {
         alert('导入配置失败: ' + importResult.error);
@@ -137,18 +137,19 @@ function buildImportConfigMessage(config) {
     return lines.join('\n');
 }
 
-function applyImportedConfig(config) {
-    if (config.categories) {
-        TAG_CATEGORIES = config.categories;
+async function applyImportedConfig(config) {
+    const normalized = tagCatalog.load({
+        categories: config.categories || TAG_CATEGORIES,
+        tags: config.tags || allTags
+    });
+    if (normalized.categoriesChanged) {
+        await window.electronAPI.saveCategories(TAG_CATEGORIES);
     }
-    if (config.tags) {
-        allTags = config.tags;
+    if (normalized.tagsChanged) {
+        await window.electronAPI.saveTags(allTags);
     }
     if (config.imageScoresByHash) {
-        imageScoresByHash = config.imageScoresByHash;
-        images.forEach(img => {
-            img.score = getImageScore(img);
-        });
+        imageCollection.replaceScores(config.imageScoresByHash);
     }
 
     renderTagList();
@@ -258,10 +259,8 @@ async function moveNewlyTaggedImageToTarget(imagePath) {
     }
 
     const nextImageIndex = currentImageIndex;
-    images = images.filter(image => image.path !== imagePath);
-    renderImages();
-    updateImageCount();
-    updateMigrateSourceFolder();
+    imageCollection.remove(imagePath);
+    refreshAfterImageMembershipChange();
 
     if (sortedImages.length === 0) {
         closeModal();
@@ -331,10 +330,8 @@ function handleMigrationResult(result) {
             .map(item => item?.originalPath)
             .filter(Boolean)
         : [];
-    images = images.filter(img => !movedPaths.includes(img.path));
-    renderImages();
-    updateImageCount();
-    updateMigrateSourceFolder();
+    imageCollection.remove(movedPaths);
+    refreshAfterImageMembershipChange();
 }
 
 async function selectTrashFolder() {

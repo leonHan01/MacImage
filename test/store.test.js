@@ -120,3 +120,20 @@ test('updates individual image metadata without recreating aggregate maps', asyn
         await rm(tempDir, { recursive: true, force: true });
     }
 });
+
+test('renames image tags transactionally and merges existing assignments', async () => {
+    const tempDir = await mkdtemp(TEMP_ROOT);
+    const store = new Store(path.join(tempDir, 'store.sqlite'));
+    try {
+        store.addImageTag('hash-one', '旧名称');
+        store.addImageTag('hash-one', '新名称');
+        store.addImageTag('hash-two', '旧名称');
+
+        assert.equal(store.renameTagAcrossAllImages('旧名称', '新名称'), 2);
+        assert.deepEqual(store.getImageTags('hash-one'), ['新名称']);
+        assert.deepEqual(store.getImageTags('hash-two'), ['新名称']);
+    } finally {
+        store.close();
+        await rm(tempDir, { recursive: true, force: true });
+    }
+});

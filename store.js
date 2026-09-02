@@ -1,10 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
+const ratingModel = require('./rating-model');
 
 const JSON_MIGRATION_META_KEY = 'json_config_migrated';
 const IMAGE_METADATA_MIGRATION_META_KEY = 'image_metadata_tables_migrated_v1';
-const DEFAULT_ELO_RATING = 1500;
 const IMAGE_METADATA_KEYS = ['pathToHash', 'imageTagsByHash', 'imageScoresByHash'];
 
 class Store {
@@ -137,7 +137,7 @@ class Store {
             `);
             Object.entries(imageScoresByHash).forEach(([hash, value]) => {
                 if (!hash) return;
-                const score = normalizeScore(value);
+                const score = ratingModel.normalize(value);
                 insertScore.run(hash, score.rating, score.wins, score.matches, now);
             });
 
@@ -424,12 +424,31 @@ class Store {
         return Number(this.db.prepare('DELETE FROM image_tags WHERE tag = ?').run(tag).changes) || 0;
     }
 
+    renameTagAcrossAllImages(currentTag, nextTag) {
+        if (typeof currentTag !== 'string' || !currentTag || typeof nextTag !== 'string' || !nextTag) {
+            return 0;
+        }
+        if (currentTag === nextTag) {
+            return Number(this.db.prepare('SELECT COUNT(*) AS count FROM image_tags WHERE tag = ?').get(currentTag)?.count) || 0;
+        }
+
+        const affectedCount = Number(this.db.prepare('SELECT COUNT(*) AS count FROM image_tags WHERE tag = ?').get(currentTag)?.count) || 0;
+        this.runTransaction(() => {
+            this.db.prepare(`
+                INSERT OR IGNORE INTO image_tags (hash, tag)
+                SELECT hash, ? FROM image_tags WHERE tag = ?
+            `).run(nextTag, currentTag);
+            this.db.prepare('DELETE FROM image_tags WHERE tag = ?').run(currentTag);
+        });
+        return affectedCount;
+    }
+
     getImageScore(hash) {
         if (typeof hash !== 'string' || !hash) return null;
         const row = this.db.prepare(`
             SELECT rating, wins, matches FROM image_scores WHERE hash = ?
         `).get(hash);
-        return row ? normalizeScore(row) : null;
+        return row ? ratingModel.normalize(row) : null;
     }
 
     getImageMetadata(hash) {
@@ -456,7 +475,7 @@ class Store {
                 SELECT hash, rating, wins, matches FROM image_scores
                 WHERE hash IN (${placeholders})
             `).all(...chunk).forEach((row) => {
-                metadata[row.hash].score = normalizeScore(row);
+                metadata[row.hash].score = ratingModel.normalize(row);
             });
         }
         return metadata;
@@ -478,7 +497,7 @@ class Store {
                     updated_at = excluded.updated_at
             `);
             entries.forEach(([hash, value]) => {
-                const score = normalizeScore(value);
+                const score = ratingModel.normalize(value);
                 statement.run(hash, score.rating, score.wins, score.matches, now);
             });
         });
@@ -495,7 +514,7 @@ class Store {
             const now = Date.now();
             Object.entries(nextScores).forEach(([hash, value]) => {
                 if (!hash) return;
-                const score = normalizeScore(value);
+                const score = ratingModel.normalize(value);
                 statement.run(hash, score.rating, score.wins, score.matches, now);
             });
         });
@@ -503,7 +522,7 @@ class Store {
 
     getAllImageScores() {
         const rows = this.db.prepare('SELECT hash, rating, wins, matches FROM image_scores').all();
-        return Object.fromEntries(rows.map(row => [row.hash, normalizeScore(row)]));
+        return Object.fromEntries(rows.map(row => [row.hash, ratingModel.normalize(row)]));
     }
 
     delete(key) {
@@ -553,27 +572,6 @@ function normalizeHashEntry(value) {
         size: Number.isFinite(value.size) ? value.size : null,
         mtimeMs: Number.isFinite(value.mtimeMs) ? value.mtimeMs : null
     };
-}
-
-function normalizeScore(value) {
-    if (isPlainObject(value)) {
-        return {
-            rating: normalizeScoreNumber(value.rating, DEFAULT_ELO_RATING),
-            wins: normalizeScoreNumber(value.wins, 0),
-            matches: normalizeScoreNumber(value.matches, 0)
-        };
-    }
-    const legacyWins = normalizeScoreNumber(value, 0);
-    return {
-        rating: DEFAULT_ELO_RATING + legacyWins,
-        wins: legacyWins,
-        matches: legacyWins
-    };
-}
-
-function normalizeScoreNumber(value, fallback) {
-    const number = Number(value);
-    return Number.isFinite(number) ? Math.max(0, Math.round(number)) : fallback;
 }
 
 module.exports = Store;

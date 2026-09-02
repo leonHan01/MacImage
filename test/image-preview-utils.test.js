@@ -31,14 +31,10 @@ test('recognizes common image signatures used by the app', () => {
     assert.equal(detectImageFormat(Buffer.from([0x42, 0x4d, 0x00, 0x00])), 'bmp');
 });
 
-test('uses a new cache generation so generic-icon caches are ignored', () => {
+test('uses a versioned thumbnail cache name so stale entries are ignored', () => {
     assert.equal(
-        getImageCacheFileName('abc123', 220, 'thumbnail'),
+        getImageCacheFileName('abc123', 220),
         'abc123-thumbnail-v2-220.png'
-    );
-    assert.equal(
-        getImageCacheFileName('abc123', 1600, 'preview'),
-        'abc123-preview-v2-1600.png'
     );
 });
 

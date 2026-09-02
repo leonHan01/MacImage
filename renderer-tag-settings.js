@@ -1,3 +1,5 @@
+let editingTagName = null;
+
 function getTagCount(tagName) {
     let count = 0;
     images.forEach(img => {
@@ -111,27 +113,19 @@ async function handleShortcutInputKeydown(event, tagName) {
 
 async function updateTagShortcut(tagName, shortcutValue) {
     const shortcut = normalizeShortcut(shortcutValue);
-    const tag = allTags.find(item => item.name === tagName);
-    if (!tag) return;
-
-    const reservedLabel = getReservedShortcutLabel(shortcut);
-    if (reservedLabel) {
-        alert(`快捷键 ${shortcut.toUpperCase()} 已用于${reservedLabel}`);
+    const result = tagCatalog.setShortcut(tagName, shortcut);
+    if (!result.success && result.reason === 'reserved-shortcut') {
+        alert(`快捷键 ${shortcut.toUpperCase()} 已用于${result.reservedLabel}`);
         renderTagList();
         return;
     }
-
-    const duplicate = shortcut
-        ? allTags.find(item => item.name !== tagName && normalizeShortcut(item.shortcut) === shortcut)
-        : null;
-
-    if (duplicate) {
-        alert(`快捷键 ${shortcut.toUpperCase()} 已被标签 "${duplicate.name}" 使用`);
+    if (!result.success && result.reason === 'duplicate-shortcut') {
+        alert(`快捷键 ${shortcut.toUpperCase()} 已被标签 "${result.tag.name}" 使用`);
         renderTagList();
         return;
     }
+    if (!result.success) return;
 
-    tag.shortcut = shortcut;
     await window.electronAPI.saveTags(allTags);
     renderTagList();
 
@@ -140,7 +134,7 @@ async function updateTagShortcut(tagName, shortcutValue) {
     }
 }
 
-async function addNewTag() {
+async function saveTagFromForm() {
     const nameInput = document.getElementById('newTagInput');
     const categorySelect = document.getElementById('newTagCategory');
     
@@ -148,20 +142,44 @@ async function addNewTag() {
     
     if (!name) return;
     
-    if (allTags.find(t => t.name === name)) {
+    const previousTag = editingTagName
+        ? { ...allTags.find(tag => tag.name === editingTagName) }
+        : null;
+    const result = tagCatalog.saveTag({
+        currentName: editingTagName,
+        name,
+        category: categorySelect ? categorySelect.value : 'other'
+    });
+    if (!result.success && result.reason === 'duplicate-name') {
         alert('标签名称已存在');
         return;
     }
+    if (!result.success) return;
 
-    const color = generateRandomColor();
-    const category = categorySelect ? categorySelect.value : 'other';
-    allTags.push({ name, color, category, shortcut: '' });
+    if (result.renamed) {
+        const renameResult = await window.electronAPI.renameTagAcrossAllImages(result.previousName, result.tag.name);
+        if (!renameResult.success) {
+            tagCatalog.saveTag({
+                currentName: result.tag.name,
+                name: previousTag.name,
+                category: previousTag.category,
+                color: previousTag.color
+            });
+            tagCatalog.setShortcut(previousTag.name, previousTag.shortcut);
+            alert('重命名图片标签失败: ' + renameResult.error);
+            return;
+        }
+        imageCollection.renameTag(result.previousName, result.tag.name);
+        selectedFilterTags = selectedFilterTags.map(tag => (
+            tag === result.previousName ? result.tag.name : tag
+        ));
+    }
+
     await window.electronAPI.saveTags(allTags);
-    
-    nameInput.value = '';
-    if (categorySelect) categorySelect.value = 'other';
+    cancelTagEdit();
     renderTagList();
     renderTagFilter();
+    renderImages();
 }
 
 async function quickAddTag() {
@@ -172,14 +190,14 @@ async function quickAddTag() {
     
     if (!name) return;
     
-    if (allTags.find(t => t.name === name)) {
+    const result = tagCatalog.saveTag({
+        name,
+        category: categorySelect ? categorySelect.value : 'other'
+    });
+    if (!result.success) {
         nameInput.value = '';
         return;
     }
-
-    const color = generateRandomColor();
-    const category = categorySelect ? categorySelect.value : 'other';
-    allTags.push({ name, color, category, shortcut: '' });
     await window.electronAPI.saveTags(allTags);
     
     nameInput.value = '';
@@ -206,9 +224,9 @@ async function modalQuickAddTag() {
 }
 
 async function ensureTagExists(name, category = 'other') {
-    if (allTags.find(t => t.name === name)) return false;
+    const result = tagCatalog.saveTag({ name, category });
+    if (!result.success) return false;
 
-    allTags.push({ name, color: generateRandomColor(), category, shortcut: '' });
     await window.electronAPI.saveTags(allTags);
     renderTagFilter();
     return true;
@@ -225,35 +243,22 @@ async function addTagToCurrentModalImage(tagName) {
         }
     }
 
-    if (img.hash) {
-        img.tags = imageTagsByHash[img.hash] || [];
-    }
-
     renderModalTagList(img);
     renderImages();
 }
 
 async function deleteTag(tagName) {
     if (!confirm(`确定要删除标签 "${tagName}" 吗？`)) return;
-    
-    allTags = allTags.filter(t => t.name !== tagName);
-    await window.electronAPI.saveTags(allTags);
 
     const result = await window.electronAPI.removeTagFromAllImages(tagName);
     if (!result.success) {
         alert('删除图片标签失败: ' + result.error);
         return;
     }
-    images.forEach((image) => {
-        const remainingTags = getImageTags(image).filter(tag => tag !== tagName);
-        image.tags = remainingTags;
-        if (!image.hash) return;
-        if (remainingTags.length > 0) {
-            imageTagsByHash[image.hash] = remainingTags;
-        } else {
-            delete imageTagsByHash[image.hash];
-        }
-    });
+    if (editingTagName === tagName) cancelTagEdit();
+    tagCatalog.removeTag(tagName);
+    await window.electronAPI.saveTags(allTags);
+    imageCollection.removeTag(tagName);
     
     selectedFilterTags = selectedFilterTags.filter(t => t !== tagName);
     
@@ -273,32 +278,32 @@ function editTag(tagName) {
     if (categorySelect) {
         categorySelect.value = tag.category || 'other';
     }
-    
-    allTags = allTags.filter(t => t.name !== tagName);
-    window.electronAPI.saveTags(allTags);
-    
-    renderTagList();
+    editingTagName = tagName;
+    const saveButton = document.getElementById('addTagBtn');
+    if (saveButton) saveButton.textContent = '保存';
     nameInput.focus();
+}
+
+function cancelTagEdit() {
+    editingTagName = null;
+    const nameInput = document.getElementById('newTagInput');
+    const categorySelect = document.getElementById('newTagCategory');
+    const saveButton = document.getElementById('addTagBtn');
+    if (nameInput) nameInput.value = '';
+    if (categorySelect) categorySelect.value = 'other';
+    if (saveButton) saveButton.textContent = '添加';
 }
 
 async function addTagToImage(imagePath, tagName) {
     const tags = await window.electronAPI.addTagToImage(imagePath, tagName);
     const img = images.find(i => i.path === imagePath);
-    if (img && img.hash) {
-        imageTagsByHash[img.hash] = tags;
-    }
+    if (img) imageCollection.applyMetadata({ path: imagePath, tags });
     return tags;
 }
 
 async function removeTagFromImage(imagePath, tagName) {
     const tags = await window.electronAPI.removeTagFromImage(imagePath, tagName);
     const img = images.find(i => i.path === imagePath);
-    if (img && img.hash) {
-        if (tags.length === 0) {
-            delete imageTagsByHash[img.hash];
-        } else {
-            imageTagsByHash[img.hash] = tags;
-        }
-    }
+    if (img) imageCollection.applyMetadata({ path: imagePath, tags });
     return tags;
 }

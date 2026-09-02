@@ -179,14 +179,9 @@ async function deleteDuplicateImage(imagePath) {
     }
 
     recordFileOperation([createDeleteHistoryItem(result, img)]);
-    images = images.filter(item => item.path !== imagePath);
-    duplicateGroups = removePathsFromDuplicateGroups([imagePath]);
+    imageCollection.remove(imagePath);
     duplicateScanCompleted = true;
-    renderImages();
-    renderTagFilter();
-    renderDuplicateResults();
-    updateImageCount();
-    updateMigrateSourceFolder();
+    refreshAfterImageMembershipChange();
 
     if (imageModal.classList.contains('show')) {
         if (sortedImages.length === 0) {
@@ -267,17 +262,11 @@ async function deleteDuplicateImagesDistinct() {
 
 function refreshAfterDuplicateBatchRemoval(deletedPaths, modalState) {
     if (deletedPaths.length > 0) {
-        const deletedPathSet = new Set(deletedPaths);
-        images = images.filter(item => !deletedPathSet.has(item.path));
+        imageCollection.remove(deletedPaths);
     }
 
-    duplicateGroups = removePathsFromDuplicateGroups(deletedPaths);
     duplicateScanCompleted = true;
-    renderImages();
-    renderTagFilter();
-    renderDuplicateResults();
-    updateImageCount();
-    updateMigrateSourceFolder();
+    refreshAfterImageMembershipChange();
 
     if (!modalState.modalWasOpen) return;
 

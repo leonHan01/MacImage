@@ -6,6 +6,7 @@ const { test } = require('node:test');
 
 const registerFileOperationHandlers = require('../main-ipc-file-operations');
 const { createFileOperationUtils } = require('../file-operation-utils');
+const { createImageFileOperations } = require('../image-file-operations');
 
 const TEMP_ROOT = path.join('/private/tmp', 'macimage-file-ops-');
 
@@ -27,28 +28,29 @@ async function mapWithConcurrency(items, concurrency, mapper) {
 function registerTestHandlers(trashFolder, overrides = {}) {
     const handlers = {};
     const ipcMain = { handle: (name, handler) => { handlers[name] = handler; } };
-    const utils = createFileOperationUtils({ fsp: fs.promises, path });
+    const imageFileOperations = createTestImageFileOperations(overrides);
     const services = registerFileOperationHandlers({
         ipcMain,
         path,
-        fsp: fs.promises,
-        getStore: () => ({ get: key => key === 'trashFolder' ? trashFolder : null }),
-        mapWithConcurrency,
-        reserveAvailablePath: utils.reserveAvailablePath,
-        getNumberedPath: utils.getNumberedPath,
-        pathExists: async (filePath) => {
-            try {
-                await fs.promises.access(filePath);
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        moveFileSafely: overrides.moveFileSafely || utils.moveFileSafely,
-        moveHashMapping: () => {},
-        moveHashMappings: () => {}
+        store: { get: key => key === 'trashFolder' ? trashFolder : null },
+        imageFileOperations
     });
     return { handlers, services };
+}
+
+function createTestImageFileOperations(overrides = {}) {
+    const utils = createFileOperationUtils({ fsp: fs.promises, path });
+    return createImageFileOperations({
+        fsp: fs.promises,
+        path,
+        fileOperations: {
+            ...utils,
+            moveFileSafely: overrides.moveFileSafely || utils.moveFileSafely
+        },
+        mapWithConcurrency,
+        moveHashMappings: () => {},
+        listImageEntries: async () => []
+    });
 }
 
 test('migration reserves distinct targets for colliding names running concurrently', async () => {
@@ -68,26 +70,11 @@ test('migration reserves distinct targets for colliding names running concurrent
 
         const handlers = {};
         const ipcMain = { handle: (name, handler) => { handlers[name] = handler; } };
-        const utils = createFileOperationUtils({ fsp: fs.promises, path });
         registerFileOperationHandlers({
             ipcMain,
             path,
-            fsp: fs.promises,
-            getStore: () => ({ get: () => null }),
-            mapWithConcurrency,
-            reserveAvailablePath: utils.reserveAvailablePath,
-            getNumberedPath: utils.getNumberedPath,
-            pathExists: async (filePath) => {
-                try {
-                    await fs.promises.access(filePath);
-                    return true;
-                } catch {
-                    return false;
-                }
-            },
-            moveFileSafely: utils.moveFileSafely,
-            moveHashMapping: () => {},
-            moveHashMappings: () => {}
+            store: { get: () => null },
+            imageFileOperations: createTestImageFileOperations()
         });
 
         const result = await handlers['migrate-images']({}, [photoPath, numberedPhotoPath], targetDir);

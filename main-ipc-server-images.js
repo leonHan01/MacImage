@@ -2,6 +2,7 @@ const LEON_API_BASE_URL = 'http://192.168.3.35:8080';
 const SERVER_IMAGE_LOAD_LIMIT = 1_000;
 const DEFAULT_SERVER_DOWNLOAD_CONCURRENCY = 5;
 const MAX_SERVER_DOWNLOAD_CONCURRENCY = 10;
+const { mapWithConcurrency } = require('./async-utils');
 
 function registerServerImageHandlers(deps) {
     const {
@@ -10,8 +11,7 @@ function registerServerImageHandlers(deps) {
         path,
         fsp,
         getMainWindow,
-        getStore,
-        mapWithConcurrency,
+        store,
         getAvailablePath,
         getServerDownloadDirectory,
         selectDirectory
@@ -41,9 +41,9 @@ function registerServerImageHandlers(deps) {
             return { success: false, error: '服务端没有可下载的图片' };
         }
 
-        const downloadDirectory = getStore().get('serverDownloadFolder') || getServerDownloadDirectory();
+        const downloadDirectory = store.get('serverDownloadFolder') || getServerDownloadDirectory();
         const downloadConcurrency = normalizeServerDownloadConcurrency(
-            getStore().get('serverDownloadConcurrency'),
+            store.get('serverDownloadConcurrency'),
             DEFAULT_SERVER_DOWNLOAD_CONCURRENCY,
             MAX_SERVER_DOWNLOAD_CONCURRENCY
         );
@@ -133,19 +133,19 @@ function registerServerImageHandlers(deps) {
     });
 
     ipcMain.handle('get-server-download-folder', () => {
-        return getStore().get('serverDownloadFolder') || getServerDownloadDirectory();
+        return store.get('serverDownloadFolder') || getServerDownloadDirectory();
     });
 
     ipcMain.handle('select-server-download-folder', async () => {
         const result = await selectDirectory(dialog, getMainWindow(), '选择图片下载默认位置', 'Error selecting server download folder:');
         if (result.success) {
-            getStore().set('serverDownloadFolder', result.path);
+            store.set('serverDownloadFolder', result.path);
         }
         return result;
     });
 
     ipcMain.handle('get-server-download-concurrency', () => normalizeServerDownloadConcurrency(
-        getStore().get('serverDownloadConcurrency'),
+        store.get('serverDownloadConcurrency'),
         DEFAULT_SERVER_DOWNLOAD_CONCURRENCY,
         MAX_SERVER_DOWNLOAD_CONCURRENCY
     ));
@@ -155,7 +155,7 @@ function registerServerImageHandlers(deps) {
         if (!Number.isInteger(value) || value < 1 || value > MAX_SERVER_DOWNLOAD_CONCURRENCY) {
             return { success: false, error: `并发下载线程数必须是 1 到 ${MAX_SERVER_DOWNLOAD_CONCURRENCY} 的整数` };
         }
-        getStore().set('serverDownloadConcurrency', value);
+        store.set('serverDownloadConcurrency', value);
         return { success: true, value };
     });
 }
