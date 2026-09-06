@@ -93,7 +93,6 @@ function registerFileOperationHandlers({ ipcMain, path, store, imageFileOperatio
 
                     while (deferredWaterfallPages.length > WATERFALL_DEFERRED_PAGE_LIMIT) {
                         const oldestPage = deferredWaterfallPages.shift();
-                        releasedBatchIds.push(oldestPage.id);
                         const failedPaths = await commitDeferredWaterfallPage(
                             oldestPage,
                             result,
@@ -103,6 +102,7 @@ function registerFileOperationHandlers({ ipcMain, path, store, imageFileOperatio
                             deferredWaterfallPages.unshift({ ...oldestPage, paths: failedPaths });
                             break;
                         }
+                        releasedBatchIds.push(oldestPage.id);
                     }
 
                     return { pendingPage, releasedBatchIds };
@@ -143,6 +143,14 @@ function registerFileOperationHandlers({ ipcMain, path, store, imageFileOperatio
         return runDeferredCleanupTask(async () => (
             deferredWaterfallPages.flatMap(pendingPage => pendingPage.paths)
         ));
+    });
+
+    ipcMain.handle('get-waterfall-pending-pages', async () => {
+        await Promise.allSettled([...activeWaterfallPageProcesses]);
+        return runDeferredCleanupTask(async () => deferredWaterfallPages.map(page => ({
+            id: page.id,
+            paths: [...page.paths]
+        })));
     });
 
     async function flushPendingWaterfallCleanup() {

@@ -1,4 +1,5 @@
 let modalTagsExpanded = false;
+let currentModalImagePath = null;
 
 function openImageModal(index, { closeOnImageClick = false } = {}) {
     currentImageIndex = index;
@@ -38,6 +39,7 @@ function toggleModalTags() {
 function closeModal() {
     imageModal.classList.remove('show');
     currentImageIndex = -1;
+    currentModalImagePath = null;
     closeModalOnImageClick = false;
     resetImageTransform();
 }
@@ -52,6 +54,7 @@ function updateModalImage() {
     if (currentImageIndex < 0 || currentImageIndex >= sortedImages.length) return;
     
     const img = sortedImages[currentImageIndex];
+    currentModalImagePath = img.path;
     const modalImage = document.getElementById('modalImage');
     modalImage.src = toFileUrl(img.path);
     modalImage.title = '双击或按 F 添加或取消红心标签';
@@ -61,6 +64,23 @@ function updateModalImage() {
     document.getElementById('modalImageIndex').textContent = `${currentImageIndex + 1} / ${sortedImages.length}`;
     
     renderModalTagList(img);
+}
+
+function syncModalWithImages() {
+    if (!imageModal.classList.contains('show')) return;
+    if (sortedImages.length === 0) {
+        closeModal();
+        return;
+    }
+
+    const retainedIndex = sortedImages.findIndex(image => image.path === currentModalImagePath);
+    currentImageIndex = retainedIndex >= 0
+        ? retainedIndex
+        : Math.min(Math.max(currentImageIndex, 0), sortedImages.length - 1);
+    if (sortedImages[currentImageIndex].path !== currentModalImagePath) resetImageTransform();
+    updateModalImage();
+    updateZoomDisplay();
+    updateImageCursor();
 }
 
 function renderModalTagList(img) {
@@ -452,109 +472,4 @@ async function undoLastDelete() {
     if (failedItems.length > 0) {
         alert(`撤销完成 ${restoredCount} 项，${failedItems.length} 项失败：${failedItems[0].originalPath}`);
     }
-}
-
-function handleKeyboard(e) {
-    if (imageModal.classList.contains('show')) {
-        if (isEditableTarget(e.target)) {
-            if (e.key === 'Escape') closeModal();
-            return;
-        }
-        if (handleImageModalShortcut(e)) {
-            return;
-        }
-        if (handleTagShortcut(e)) {
-            return;
-        }
-        else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-            e.preventDefault();
-            showPrevImage();
-        }
-        else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-            e.preventDefault();
-            showNextImage();
-        }
-        else if (e.key === 'Escape') closeModal();
-        else if (e.key === 'Delete') {
-            e.preventDefault();
-            void deleteCurrentImage();
-        }
-        else if (e.key === '+' || e.key === '=') {
-            e.preventDefault();
-            zoomIn();
-        }
-        else if (e.key === '-') {
-            e.preventDefault();
-            zoomOut();
-        }
-        else if (e.key === '0') {
-            e.preventDefault();
-            zoomReset();
-        }
-    } else if (competitionModal.classList.contains('show')) {
-        if (e.key === 'Escape') {
-            closeCompetition();
-        } else if (/^[1-8]$/.test(e.key)) {
-            e.preventDefault();
-            chooseCompetitionWinner(Number(e.key) - 1);
-        } else if (e.key === 'ArrowLeft') {
-            e.preventDefault();
-            chooseCompetitionWinner(0);
-        } else if (e.key === 'ArrowRight') {
-            e.preventDefault();
-            chooseCompetitionWinner(1);
-        }
-    } else if (settingsModal.classList.contains('show')) {
-        if (e.key === 'Escape') closeSettings();
-    } else if (currentViewMode === 'waterfall' && !isEditableTarget(e.target)) {
-        const isUnmodifiedSpace = (e.key === ' ' || e.code === 'Space') &&
-            !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
-        if (e.key === 'ArrowDown' || isUnmodifiedSpace) {
-            e.preventDefault();
-            if (!e.repeat) void advanceWaterfallPage();
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (!e.repeat) void restorePreviousWaterfallPage();
-        }
-    }
-}
-
-function handleImageModalShortcut(e) {
-    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || isEditableTarget(e.target)) {
-        return false;
-    }
-
-    const shortcut = normalizeShortcut(e.key);
-    if (shortcut === FAVORITE_IMAGE_SHORTCUT) {
-        e.preventDefault();
-        if (!e.repeat) {
-            void toggleHeartTagForCurrentImage(e, { autoAdvance: true });
-        }
-        return true;
-    }
-
-    if (shortcut === DELETE_IMAGE_SHORTCUT) {
-        e.preventDefault();
-        if (!e.repeat) {
-            void deleteCurrentImage();
-        }
-        return true;
-    }
-
-    return false;
-}
-
-function handleTagShortcut(e) {
-    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || isEditableTarget(e.target)) {
-        return false;
-    }
-
-    const tag = getTagByShortcut(e.key);
-    if (!tag) {
-        return false;
-    }
-
-    e.preventDefault();
-    toggleCurrentImageTag(tag.name, { showFeedback: true, autoAdvance: true });
-    return true;
 }

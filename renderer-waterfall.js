@@ -6,6 +6,11 @@ const waterfallSession = MacImageWaterfallSession.create({
     processPage: page => window.electronAPI.processWaterfallPage(page),
     restorePendingPage: pageId => window.electronAPI.restoreWaterfallPendingPage(pageId)
 });
+const activeWaterfallOperations = new Set();
+
+async function waitForWaterfallOperations() {
+    await Promise.allSettled([...activeWaterfallOperations]);
+}
 
 function getWaterfallView() {
     return waterfallSession.snapshot(sortedImages, {
@@ -128,8 +133,8 @@ function sumImageSizes(imageList) {
     return imageList.reduce((total, image) => total + Math.max(0, Number(image.size) || 0), 0);
 }
 
-function resetWaterfallReviewSession() {
-    waterfallSession.reset();
+function resetWaterfallReviewSession(images = [], pendingPages = []) {
+    waterfallSession.reset({ images, pendingPages });
 }
 
 function renderWaterfallCard(image, index, scores = getWaterfallView().scores) {
@@ -249,27 +254,43 @@ async function selectWaterfallTrashFolder() {
 }
 
 async function advanceWaterfallPage() {
+    if (isFolderLoading) return;
+    const sourceFolder = currentFolder;
     const operation = waterfallSession.advance(sortedImages, {
         targetFolder: migrateTargetFolder,
         currentFolder,
         trashFolder
     });
-    renderWaterfallPage();
-    const outcome = await operation;
-    if (outcome.operations.length > 0) recordFileOperation(outcome.operations);
-    if (outcome.processedPaths.length > 0) imageCollection.remove(outcome.processedPaths);
-    refreshAfterImageMembershipChange();
+    activeWaterfallOperations.add(operation);
+    try {
+        renderWaterfallPage();
+        const outcome = await operation;
+        if (sourceFolder !== currentFolder || isFolderLoading) return;
+        if (outcome.operations.length > 0) recordFileOperation(outcome.operations);
+        if (outcome.processedPaths.length > 0) imageCollection.remove(outcome.processedPaths);
+        refreshAfterImageMembershipChange();
+    } finally {
+        activeWaterfallOperations.delete(operation);
+    }
 }
 
 async function restorePreviousWaterfallPage() {
+    if (isFolderLoading) return;
+    const sourceFolder = currentFolder;
     const operation = waterfallSession.restore(images);
-    renderWaterfallPage();
-    const outcome = await operation;
-    if (outcome.success) {
-        imageCollection.prepend(outcome.restoredImages);
-        duplicateGroups = [];
-        duplicateScanCompleted = false;
+    activeWaterfallOperations.add(operation);
+    try {
+        renderWaterfallPage();
+        const outcome = await operation;
+        if (sourceFolder !== currentFolder || isFolderLoading) return;
+        if (outcome.success) {
+            imageCollection.prepend(outcome.restoredImages);
+            duplicateGroups = [];
+            duplicateScanCompleted = false;
+        }
+        imageGrid.scrollTop = 0;
+        refreshAfterImageMembershipChange();
+    } finally {
+        activeWaterfallOperations.delete(operation);
     }
-    imageGrid.scrollTop = 0;
-    refreshAfterImageMembershipChange();
 }

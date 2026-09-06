@@ -1,5 +1,5 @@
 const LEON_API_BASE_URL = 'http://192.168.3.35:8080';
-const SERVER_IMAGE_LOAD_LIMIT = 1_000;
+const SERVER_IMAGE_LOAD_LIMIT = 9_999;
 const DEFAULT_SERVER_DOWNLOAD_CONCURRENCY = 5;
 const MAX_SERVER_DOWNLOAD_CONCURRENCY = 10;
 const { mapWithConcurrency } = require('./async-utils');
@@ -12,7 +12,7 @@ function registerServerImageHandlers(deps) {
         fsp,
         getMainWindow,
         store,
-        getAvailablePath,
+        reserveAvailablePath,
         getServerDownloadDirectory,
         selectDirectory
     } = deps;
@@ -65,6 +65,7 @@ function registerServerImageHandlers(deps) {
 
         reportProgress('downloading');
         const downloadResults = await mapWithConcurrency(pictures, downloadConcurrency, async (picture) => {
+            let destination;
             try {
                 if (!picture || !Number.isInteger(picture.id) || typeof picture.imageUrl !== 'string') {
                     throw new Error('图片数据缺少 id 或 imageUrl');
@@ -82,15 +83,32 @@ function registerServerImageHandlers(deps) {
 
                 const sourceName = picture.fileName || path.basename(imageUrl.pathname) || `${picture.id}.jpg`;
                 const safeName = path.basename(sourceName).replace(/[^a-zA-Z0-9._-]/g, '_') || `${picture.id}.jpg`;
-                const destination = await getAvailablePath(
+                const contents = Buffer.from(await imageResponse.arrayBuffer());
+                destination = await reserveAvailablePath(
                     path.join(downloadDirectory, safeName),
                     (index) => path.join(downloadDirectory, `${picture.id}-${index}-${safeName}`)
                 );
-                await fsp.writeFile(destination, Buffer.from(await imageResponse.arrayBuffer()));
+                await fsp.writeFile(destination, contents);
 
                 successfulCount++;
-                return { success: true, id: picture.id, path: destination };
+                reportProgress('deleting');
+                try {
+                    const deleteResponse = await fetch(`${LEON_API_BASE_URL}/api/leon/pictures`, {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pictureIds: [picture.id] })
+                    });
+                    if (!deleteResponse.ok) {
+                        throw new Error(`服务端删除请求失败（HTTP ${deleteResponse.status}）`);
+                    }
+                    return { success: true, id: picture.id, path: destination, deleted: true };
+                } catch (error) {
+                    return { success: true, id: picture.id, path: destination, deleted: false, deletionError: error.message };
+                }
             } catch (error) {
+                if (destination) {
+                    await fsp.unlink(destination).catch(() => {});
+                }
                 failedCount++;
                 return { success: false, id: picture?.id, error: error.message };
             } finally {
@@ -104,30 +122,21 @@ function registerServerImageHandlers(deps) {
             .filter(result => !result.success)
             .map(result => ({ id: result.id ?? null, error: result.error }));
 
-        let deletionError = null;
-        if (downloaded.length > 0) {
-            reportProgress('deleting');
-            try {
-                const deleteResponse = await fetch(`${LEON_API_BASE_URL}/api/leon/pictures`, {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pictureIds: downloaded.map(result => result.id) })
-                });
-                if (!deleteResponse.ok) {
-                    throw new Error(`服务端删除请求失败（HTTP ${deleteResponse.status}）`);
-                }
-            } catch (error) {
-                deletionError = error.message;
-            }
-        }
+        const deletionFailures = downloaded
+            .filter(result => !result.deleted)
+            .map(result => ({ id: result.id, error: result.deletionError }));
+        const deletionError = deletionFailures.length > 0
+            ? `${deletionFailures.length} 张图片删除失败：${deletionFailures.map(failure => failure.error).join('；')}`
+            : null;
 
         reportProgress(deletionError ? 'delete-failed' : 'completed');
         return {
             success: downloaded.length > 0,
             downloadDirectory,
             downloadedCount: downloaded.length,
-            deletedCount: deletionError ? 0 : downloaded.length,
+            deletedCount: downloaded.length - deletionFailures.length,
             deletionError,
+            deletionFailures,
             failures
         };
     });

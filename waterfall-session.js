@@ -54,17 +54,21 @@
             };
         }
 
-        function reset() {
+        function reset({ images = [], pendingPages: savedPages = [] } = {}) {
             scores.clear();
-            batchNumber = 1;
-            processedCount = 0;
             movedCount = 0;
             movedSize = 0;
             deletedCount = 0;
             deletedSize = 0;
             status = '';
             isProcessing = false;
-            pendingPages = [];
+            const imagesByPath = new Map(images.map(image => [image.path, image]));
+            pendingPages = savedPages.map(page => ({
+                id: page.id,
+                images: page.paths.map(imagePath => imagesByPath.get(imagePath)).filter(Boolean)
+            })).filter(page => page.images.length > 0);
+            processedCount = pendingPages.reduce((total, page) => total + page.images.length, 0);
+            batchNumber = pendingPages.length + 1;
             restoredPagePaths = null;
             wheelDelta = 0;
             lastWheelTime = 0;
@@ -195,6 +199,11 @@
                 ...pageImages
             ].map(image => [image.path, image]));
             pendingPages = pendingPages.filter(page => !releasedBatchIds.has(page.id));
+            const deletedPaths = new Set(deleted.map(item => item.originalPath));
+            pendingPages = pendingPages.map(page => ({
+                ...page,
+                images: page.images.filter(image => !deletedPaths.has(image.path))
+            })).filter(page => page.images.length > 0);
 
             if (result.pendingBatchId && pending.length > 0) {
                 const pendingPaths = new Set(pending.map(item => item.originalPath));

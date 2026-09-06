@@ -1,12 +1,16 @@
 const ratingModel = require('./rating-model');
 
 function registerImageLibraryHandlers({ ipcMain, store, imageLibrary, logger = console }) {
-    ipcMain.handle('read-directory', async (event, directory) => {
+    ipcMain.handle('read-directory', async (event, directory, requestId) => {
         try {
             return await imageLibrary.readDirectory(directory, {
                 onMetadata: (updates) => {
                     if (event.sender.isDestroyed()) return;
-                    event.sender.send('directory-image-metadata', { dirPath: directory, updates });
+                    event.sender.send('directory-image-metadata', {
+                        dirPath: directory,
+                        updates,
+                        ...(requestId === undefined ? {} : { requestId })
+                    });
                 }
             });
         } catch (error) {

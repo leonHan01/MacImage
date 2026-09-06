@@ -1,9 +1,8 @@
 let virtualGalleryDom = null;
 
 function renderImages() {
-    let filteredImages = getFilteredImages();
-    filteredImages = sortImages(filteredImages);
-    sortedImages = filteredImages;
+    sortedImages = sortImages(getFilteredImages());
+    syncModalWithImages();
     cancelGalleryWork();
     updateImageGridViewClass();
     
@@ -11,7 +10,7 @@ function renderImages() {
         renderWaterfallPage();
         return;
     }
-    if (filteredImages.length === 0) {
+    if (sortedImages.length === 0) {
         renderEmptyImageGrid();
         return;
     }
@@ -422,10 +421,6 @@ function renderImageTagBadges(img) {
     }).join('');
 }
 
-function getImageScore(img) {
-    return getImageRatingRecord(img).rating;
-}
-
 function getImageRatingRecord(img) {
     return MacImageRating.normalize(imageCollection.getScore(img));
 }
@@ -448,19 +443,18 @@ function renderImageScoreBadge(img) {
 }
 
 function getFilteredImages() {
-    if (selectedFilterTags.length === 0 && !filterNoTag) {
-        return images;
-    }
-    
-    return images.filter(img => {
-        const tags = getImageTags(img);
-        
-        if (filterNoTag && tags.length > 0) {
-            return false;
-        }
-        
-        return selectedFilterTags.every(tag => tags.includes(tag));
+    return imageQuery.filter({
+        tags: selectedFilterTags,
+        untaggedOnly: filterNoTag
     });
+}
+
+function sortImages(imagesToSort) {
+    return imageQuery.sort(imagesToSort, currentSort);
+}
+
+function resetRandomSortOrder() {
+    imageQuery.resetRandomOrder();
 }
 
 function updateImageCount() {

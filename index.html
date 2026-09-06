@@ -134,7 +134,7 @@
                     </div>
                     <div class="server-image-loader">
                         <label for="serverImageCountInput">服务端图片：</label>
-                        <input type="number" id="serverImageCountInput" min="1" max="1000" value="10" class="server-image-count-input" title="每次下载的图片数量">
+                        <input type="number" id="serverImageCountInput" min="1" max="9999" value="10" class="server-image-count-input" title="每次下载的图片数量">
                         <button id="loadServerImagesBtn" class="server-image-load-btn">加载</button>
                         <progress id="serverImageDownloadProgress" class="server-image-download-progress" value="0" max="1" hidden></progress>
                         <span id="serverImageLoadStatus" class="server-image-load-status" aria-live="polite"></span>
@@ -337,6 +337,14 @@
                         </svg>
                         <span>重复图片</span>
                     </div>
+                    <div class="settings-nav-item" data-section="smallImages">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                            <path d="M8 15l2.5-3 2 2 2.5-3 1 1.5"></path>
+                            <circle cx="9" cy="9" r="1"></circle>
+                        </svg>
+                        <span>小图片清理</span>
+                    </div>
                     <div class="settings-nav-item" data-section="data">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -440,6 +448,24 @@
                         </div>
                         <div id="duplicateResults" class="duplicate-results">
                             <div class="empty-state">暂无检测结果</div>
+                        </div>
+                    </div>
+
+                    <div id="settingsSmallImages" class="settings-panel">
+                        <h3>小图片清理</h3>
+                        <p class="settings-hint">扫描当前文件夹中小于指定大小的图片。阈值支持小数，最大 300 KB；删除会移入回收站。</p>
+                        <div class="small-image-toolbar">
+                            <label class="small-image-threshold" for="smallImageThresholdInput">
+                                小于
+                                <input id="smallImageThresholdInput" type="number" min="0.1" max="300" step="0.1" value="100" inputmode="decimal">
+                                <span>KB</span>
+                            </label>
+                            <button id="scanSmallImagesBtn" class="primary-btn">扫描当前文件夹</button>
+                            <button id="deleteSmallImagesBtn" class="danger-outline-btn" disabled>一键删除小图片</button>
+                            <span id="smallImageSummary" class="small-image-summary">请先打开一个图片文件夹</span>
+                        </div>
+                        <div id="smallImageResults" class="small-image-results">
+                            <div class="empty-state">暂无扫描结果</div>
                         </div>
                     </div>
                     
@@ -548,6 +574,9 @@
 
     <script src="rating-model.js"></script>
     <script src="image-collection.js"></script>
+    <script src="image-query.js"></script>
+    <script src="small-image-utils.js"></script>
+    <script src="renderer-small-images.js"></script>
     <script src="tag-catalog.js"></script>
     <script src="waterfall-session.js"></script>
     <script src="renderer-state.js"></script>
@@ -555,6 +584,7 @@
     <script src="renderer-gallery.js"></script>
     <script src="renderer-waterfall.js"></script>
     <script src="renderer-modal.js"></script>
+    <script src="renderer-keyboard.js"></script>
     <script src="renderer-settings.js"></script>
     <script src="renderer-duplicates.js"></script>
     <script src="renderer-data-settings.js"></script>

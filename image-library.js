@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const pathModule = require('node:path');
 
 const { mapWithConcurrency } = require('./async-utils');
-const { calculateFileHash, calculateFullFileHash } = require('./hashUtils');
+const { calculateFileHash, calculateFullFileHash, calculateLegacyFileHash } = require('./hashUtils');
 const {
     createResizedImageWithSips,
     getImageCacheFileName,
@@ -34,6 +34,7 @@ function createImageLibrary({
     path = pathModule,
     hashFile = calculateFileHash,
     hashFullFile = calculateFullFileHash,
+    hashLegacyFile = calculateLegacyFileHash,
     resizeWithSips = createResizedImageWithSips,
     detectPreviewDecoder = getPreviewDecoder,
     readFormat = readImageFormat,
@@ -118,10 +119,9 @@ function createImageLibrary({
         (Array.isArray(candidates) ? candidates : []).forEach((candidate) => {
             if (!candidate || typeof candidate.path !== 'string' || !Number.isFinite(candidate.size)) return;
 
-            const fastHash = typeof candidate.hash === 'string' && candidate.hash
-                ? candidate.hash
-                : '__missing_fast_hash__';
-            const key = `${candidate.size}:${fastHash}`;
+            // A missing or stale renderer hash must not exclude a same-size
+            // file from verification. Confirm candidates from their contents.
+            const key = candidate.size;
             if (!candidateGroups.has(key)) candidateGroups.set(key, []);
             candidateGroups.get(key).push(candidate);
         });
@@ -193,18 +193,21 @@ function createImageLibrary({
 
         try {
             await mapWithConcurrency(records, scanConcurrency, async (record) => {
-                const stats = { size: record.size, mtimeMs: record.mtimeMs };
-                const hash = await calculateHashForStats(record.path, stats);
-                updatedPathToHash[record.path] = createHashCacheEntry(hash, stats);
-                const metadata = store.getImageMetadata(hash);
-                const update = {
-                    path: record.path,
-                    hash,
-                    tags: metadata.tags,
-                    score: metadata.score
-                };
-                updateBatch.push(update);
-                if (updateBatch.length >= metadataBatchSize) sendBatch();
+                try {
+                    const stats = { size: record.size, mtimeMs: record.mtimeMs };
+                    const hash = await calculateHashForStats(record.path, stats);
+                    updatedPathToHash[record.path] = createHashCacheEntry(hash, stats);
+                    const metadata = store.getImageMetadata(hash);
+                    updateBatch.push({
+                        path: record.path,
+                        hash,
+                        tags: metadata.tags,
+                        score: metadata.score
+                    });
+                    if (updateBatch.length >= metadataBatchSize) sendBatch();
+                } catch (error) {
+                    logger.error('Failed to hydrate image metadata:', record.path, error);
+                }
             });
             sendBatch();
             if (Object.keys(updatedPathToHash).length > 0) {
@@ -218,6 +221,7 @@ function createImageLibrary({
     function getCachedHashForStats(value, stats) {
         const entry = normalizeHashEntry(value);
         if (!entry || entry.size !== stats.size || entry.mtimeMs !== stats.mtimeMs) return null;
+        if (!/^[a-f0-9]{64}$/.test(entry.hash)) return null;
         return entry.hash;
     }
 
@@ -226,7 +230,14 @@ function createImageLibrary({
         if (!pendingHashCalculations.has(key)) {
             pendingHashCalculations.set(
                 key,
-                hashFile(imagePath).finally(() => pendingHashCalculations.delete(key))
+                (async () => {
+                    const hash = await hashFile(imagePath);
+                    if (typeof store.migrateImageMetadata === 'function') {
+                        const legacyHash = await hashLegacyFile(imagePath);
+                        store.migrateImageMetadata(legacyHash, hash);
+                    }
+                    return hash;
+                })().finally(() => pendingHashCalculations.delete(key))
             );
         }
         return pendingHashCalculations.get(key);

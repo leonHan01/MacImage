@@ -96,7 +96,7 @@ test('up arrow restores the previous page in the ten-card waterfall', () => {
     let restoreCount = 0;
     let prevented = false;
     const hiddenModal = { classList: { contains: () => false } };
-    const context = loadRendererScript('renderer-modal.js', {
+    const context = loadRendererScript('renderer-keyboard.js', {
         imageModal: hiddenModal,
         competitionModal: hiddenModal,
         settingsModal: hiddenModal,

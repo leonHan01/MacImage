@@ -105,7 +105,7 @@ async function importConfig() {
     const importResult = await window.electronAPI.importConfig(config);
     
     if (importResult.success) {
-        await applyImportedConfig(config);
+        await applyImportedConfig(config, importResult.imageScoresByHash);
         alert('配置已成功导入');
     } else {
         alert('导入配置失败: ' + importResult.error);
@@ -137,7 +137,7 @@ function buildImportConfigMessage(config) {
     return lines.join('\n');
 }
 
-async function applyImportedConfig(config) {
+async function applyImportedConfig(config, imageScoresByHash = config.imageScoresByHash) {
     const normalized = tagCatalog.load({
         categories: config.categories || TAG_CATEGORIES,
         tags: config.tags || allTags
@@ -148,8 +148,8 @@ async function applyImportedConfig(config) {
     if (normalized.tagsChanged) {
         await window.electronAPI.saveTags(allTags);
     }
-    if (config.imageScoresByHash) {
-        imageCollection.replaceScores(config.imageScoresByHash);
+    if (imageScoresByHash) {
+        imageCollection.replaceScores(imageScoresByHash);
     }
 
     renderTagList();

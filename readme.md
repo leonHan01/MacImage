@@ -36,6 +36,10 @@ MacImage is a macOS image browsing and organization tool built with Electron. It
   - Detect byte-identical images in the current folder.
   - Review duplicate groups, reveal files in Finder, or move all but the reference image in each group to the trash folder.
 
+- Small-image cleanup
+  - Enter a threshold greater than 0 and up to 300 KB to scan the current folder for images below that size.
+  - Reveal or move individual matches to trash, or confirm a batch cleanup; undo the latest batch with `Cmd + Z`.
+
 - File organization and trash
   - Set a trash folder before deleting images. Deletion moves files to the configured folder instead of permanently removing them.
   - Undo the most recent deletion, duplicate cleanup, or waterfall operation with `Cmd + Z`.
@@ -139,6 +143,10 @@ Application data and thumbnail caches are stored under Electron’s `userData` d
 - `thumbnails/`: small grid-thumbnail cache generated from image fingerprints. Waterfall and competition views load original files directly and do not persist large previews.
 - `server-downloads/`: default download folder for server images when no custom folder is selected.
 
+Image identity uses SHA-256 over the complete file. Legacy fingerprints based on the first 64KB are upgraded as images are read, preserving existing tags and ratings. The first upgrade rereads files to calculate their identities. Metadata previously merged by a legacy fingerprint cannot be attributed retroactively, so it is preserved on the corresponding images; subsequent edits are independent. Legacy rating backups remain importable.
+
+The main process retains pending waterfall pages. Returning to a folder after navigation, undo, or reopening the window restores its available previous pages.
+
 On macOS, this directory is typically:
 
 ```text
@@ -151,16 +159,29 @@ On macOS, this directory is typically:
 | --- | --- |
 | `main.js` | Electron main process, window, menu, and application lifecycle |
 | `preload.js` | Secure IPC API exposed to the renderer process |
+| `store.js` | Settings and image metadata persistence, migrations, and transactions |
+| `store-schema.js` | SQLite tables, indexes, and connection pragmas |
 | `main-ipc-handlers.js` | Folder reading, tags, ratings, thumbnails, trash, and related IPC handlers |
 | `main-ipc-file-operations.js` | Image migration and waterfall file operations |
 | `main-ipc-server-images.js` | Server image downloads and server record deletion |
-| `renderer.js` | Page events and main UI initialization |
-| `renderer-gallery.js` | List, grid, thumbnails, filtering, and sorting |
+| `image-collection.js` | Image collection and shared metadata indexed by content hash |
+| `image-query.js` | Tag filtering, field sorting, and stable random ordering without DOM dependencies |
+| `renderer-state.js` | Shared renderer state and model creation |
+| `renderer.js` | UI startup and event registration grouped by feature |
+| `renderer-folders.js` | Directory loading, metadata updates, and recent files |
+| `renderer-gallery.js` | List, grid, thumbnails, and filter controls |
 | `renderer-waterfall.js` | Waterfall scoring and organization |
-| `renderer-modal.js` | Image preview, zoom, navigation, and shortcuts |
+| `renderer-modal.js` | Image preview, zoom, navigation, tags, and undo |
+| `renderer-keyboard.js` | Keyboard routing and shortcuts for preview, competition, settings, and waterfall |
 | `renderer-settings.js` / `renderer-tag-settings.js` | Settings, categories, and tag management |
 | `renderer-duplicates.js` | Duplicate detection and cleanup |
 | `styles*.css` | UI styles |
+
+Image queries read the current collection metadata on each call. Sorting returns a new array; random ordering stays stable while filtering or refreshing metadata, and resets when opening a folder or selecting random sort again. Load `image-query.js` before `renderer-state.js`, as shown in `index.html`.
+
+Run `npm test` to check the models and regression cases without launching Electron.
+
+Store migrations and normal writes share the same SQL writers. Each operation owns its transaction, so replacements and migrations commit all related changes together. Keyboard routing checks preview, competition, settings, then waterfall in that order; only the selected context handles the event.
 
 ## License
 

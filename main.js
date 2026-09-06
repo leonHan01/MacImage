@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, shell } = requir
 const path = require('path');
 const fs = require('fs');
 const Store = require('./store');
-const { calculateFileHashSync } = require('./hashUtils');
+const { calculateLegacyFileHashSync } = require('./hashUtils');
 const { createImageLibrary, isSupportedImageFile } = require('./image-library');
 const { createFileOperationUtils } = require('./file-operation-utils');
 const { createImageFileOperations } = require('./image-file-operations');
@@ -213,7 +213,9 @@ function migrateOldData() {
         for (const imagePath in oldImageTags) {
             try {
                 if (fs.existsSync(imagePath)) {
-                    const hash = calculateFileHashSync(imagePath);
+                    // Consolidate old path-based data first; ImageLibrary
+                    // then upgrades both tags and scores to the full hash.
+                    const hash = calculateLegacyFileHashSync(imagePath);
                     const stats = fs.statSync(imagePath);
                     newPathToHash[imagePath] = {
                         hash,

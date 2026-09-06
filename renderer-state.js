@@ -1,4 +1,8 @@
 const imageCollection = MacImageCollection.create();
+const imageQuery = MacImageQuery.create({
+    collection: imageCollection,
+    getRating: image => MacImageRating.normalize(imageCollection.getScore(image)).rating
+});
 const images = imageCollection.items;
 let currentImageIndex = -1;
 let selectedFilterTags = [];
@@ -7,7 +11,6 @@ let trashFolder = null;
 let deleteHistory = [];
 let currentFolder = '';
 let currentSort = 'name-asc';
-let randomSortRanks = new Map();
 let sortedImages = [];
 let currentZoom = 1;
 let minZoom = 0.25;
@@ -21,6 +24,9 @@ let settingsNavInitialized = false;
 let lastWheelNavigationTime = 0;
 let duplicateGroups = [];
 let duplicateScanCompleted = false;
+let smallImageCandidates = [];
+let smallImageScanCompleted = false;
+let smallImageThresholdKb = getSavedSmallImageThresholdKb();
 let competitionState = null;
 let competitionGroupSize = getSavedCompetitionGroupSize();
 const savedViewMode = localStorage.getItem('macimage:viewMode');

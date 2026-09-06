@@ -7,6 +7,7 @@ function openSettings() {
     renderRecentOpenFileList();
     renderCompetitionSettings();
     renderDuplicateResults();
+    renderSmallImageResults();
     updateTrashFolderDisplay();
     initSettingsNav();
     settingsModal.classList.add('show');
@@ -51,6 +52,8 @@ function switchSettingsSection(section) {
 
     if (section === 'duplicates') {
         renderDuplicateResults();
+    } else if (section === 'smallImages') {
+        renderSmallImageResults();
     } else if (section === 'competition') {
         renderCompetitionSettings();
     }

@@ -2,10 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const ratingModel = require('./rating-model');
+const initializeStoreSchema = require('./store-schema');
 
 const JSON_MIGRATION_META_KEY = 'json_config_migrated';
 const IMAGE_METADATA_MIGRATION_META_KEY = 'image_metadata_tables_migrated_v1';
 const IMAGE_METADATA_KEYS = ['pathToHash', 'imageTagsByHash', 'imageScoresByHash'];
+const METADATA_QUERY_BATCH_SIZE = 500;
 
 class Store {
     constructor(filePath, options = {}) {
@@ -25,52 +27,7 @@ class Store {
         }
 
         this.db = new DatabaseSync(this.filePath);
-        this.db.exec(`
-            PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
-
-            CREATE TABLE IF NOT EXISTS store_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS store_values (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS image_hashes (
-                path TEXT PRIMARY KEY,
-                directory TEXT NOT NULL,
-                hash TEXT NOT NULL,
-                size INTEGER,
-                mtime_ms REAL,
-                updated_at INTEGER NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS image_hashes_directory_idx
-                ON image_hashes(directory);
-            CREATE INDEX IF NOT EXISTS image_hashes_hash_idx
-                ON image_hashes(hash);
-
-            CREATE TABLE IF NOT EXISTS image_tags (
-                hash TEXT NOT NULL,
-                tag TEXT NOT NULL,
-                PRIMARY KEY (hash, tag)
-            );
-
-            CREATE INDEX IF NOT EXISTS image_tags_tag_idx
-                ON image_tags(tag);
-
-            CREATE TABLE IF NOT EXISTS image_scores (
-                hash TEXT PRIMARY KEY,
-                rating INTEGER NOT NULL,
-                wins INTEGER NOT NULL,
-                matches INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-        `);
+        initializeStoreSchema(this.db);
 
         this.load();
     }
@@ -96,50 +53,15 @@ class Store {
             return;
         }
 
-        const pathToHash = isPlainObject(this.data.pathToHash) ? this.data.pathToHash : {};
+        const pathHashEntries = normalizePathHashEntries(this.data.pathToHash);
         const imageTagsByHash = isPlainObject(this.data.imageTagsByHash) ? this.data.imageTagsByHash : {};
         const imageScoresByHash = isPlainObject(this.data.imageScoresByHash) ? this.data.imageScoresByHash : {};
         const now = Date.now();
 
         this.runTransaction(() => {
-            const insertHash = this.db.prepare(`
-                INSERT INTO image_hashes (path, directory, hash, size, mtime_ms, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(path) DO UPDATE SET
-                    directory = excluded.directory,
-                    hash = excluded.hash,
-                    size = excluded.size,
-                    mtime_ms = excluded.mtime_ms,
-                    updated_at = excluded.updated_at
-            `);
-            Object.entries(pathToHash).forEach(([imagePath, value]) => {
-                const entry = normalizeHashEntry(value);
-                if (!imagePath || !entry) return;
-                insertHash.run(imagePath, path.dirname(imagePath), entry.hash, entry.size, entry.mtimeMs, now);
-            });
-
-            const insertTag = this.db.prepare('INSERT OR IGNORE INTO image_tags (hash, tag) VALUES (?, ?)');
-            Object.entries(imageTagsByHash).forEach(([hash, tags]) => {
-                if (!hash || !Array.isArray(tags)) return;
-                tags.forEach((tag) => {
-                    if (typeof tag === 'string' && tag) insertTag.run(hash, tag);
-                });
-            });
-
-            const insertScore = this.db.prepare(`
-                INSERT INTO image_scores (hash, rating, wins, matches, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(hash) DO UPDATE SET
-                    rating = excluded.rating,
-                    wins = excluded.wins,
-                    matches = excluded.matches,
-                    updated_at = excluded.updated_at
-            `);
-            Object.entries(imageScoresByHash).forEach(([hash, value]) => {
-                if (!hash) return;
-                const score = ratingModel.normalize(value);
-                insertScore.run(hash, score.rating, score.wins, score.matches, now);
-            });
+            upsertPathHashes(this.db, pathHashEntries, now);
+            insertLegacyImageTags(this.db, imageTagsByHash);
+            upsertImageScores(this.db, Object.entries(imageScoresByHash), now);
 
             const deleteLegacyValue = this.db.prepare('DELETE FROM store_values WHERE key = ?');
             IMAGE_METADATA_KEYS.forEach(key => deleteLegacyValue.run(key));
@@ -248,11 +170,7 @@ class Store {
 
         this.runTransaction(() => {
             this.db.exec('DELETE FROM store_values');
-            const statement = this.db.prepare(`
-                INSERT INTO store_values (key, value, updated_at)
-                VALUES (?, ?, ?)
-            `);
-            serializedEntries.forEach(({ key, value }) => statement.run(key, value, now));
+            upsertStoreValues(this.db, serializedEntries, now);
         });
 
         this.data = { ...values };
@@ -269,13 +187,7 @@ class Store {
     set(key, value) {
         assertGenericStoreKey(key);
         const serialized = this.serializeValue(value);
-        this.db.prepare(`
-            INSERT INTO store_values (key, value, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value,
-                updated_at = excluded.updated_at
-        `).run(key, serialized, Date.now());
+        upsertStoreValues(this.db, [{ key, value: serialized }], Date.now());
         this.data[key] = value;
     }
 
@@ -305,14 +217,7 @@ class Store {
         const now = Date.now();
 
         this.runTransaction(() => {
-            const statement = this.db.prepare(`
-                INSERT INTO store_values (key, value, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value = excluded.value,
-                    updated_at = excluded.updated_at
-            `);
-            entries.forEach(({ key, value }) => statement.run(key, value, now));
+            upsertStoreValues(this.db, entries, now);
         });
 
         Object.assign(this.data, values);
@@ -343,27 +248,12 @@ class Store {
     }
 
     setPathHashes(values) {
-        if (!isPlainObject(values)) return;
-        const entries = Object.entries(values)
-            .map(([imagePath, value]) => ({ imagePath, entry: normalizeHashEntry(value) }))
-            .filter(({ imagePath, entry }) => imagePath && entry);
+        const entries = normalizePathHashEntries(values);
         if (entries.length === 0) return;
 
         const now = Date.now();
         this.runTransaction(() => {
-            const statement = this.db.prepare(`
-                INSERT INTO image_hashes (path, directory, hash, size, mtime_ms, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(path) DO UPDATE SET
-                    directory = excluded.directory,
-                    hash = excluded.hash,
-                    size = excluded.size,
-                    mtime_ms = excluded.mtime_ms,
-                    updated_at = excluded.updated_at
-            `);
-            entries.forEach(({ imagePath, entry }) => {
-                statement.run(imagePath, path.dirname(imagePath), entry.hash, entry.size, entry.mtimeMs, now);
-            });
+            upsertPathHashes(this.db, entries, now);
         });
     }
 
@@ -378,21 +268,12 @@ class Store {
         this.runTransaction(() => {
             const select = this.db.prepare('SELECT hash, size, mtime_ms AS mtimeMs FROM image_hashes WHERE path = ?');
             const remove = this.db.prepare('DELETE FROM image_hashes WHERE path = ?');
-            const insert = this.db.prepare(`
-                INSERT INTO image_hashes (path, directory, hash, size, mtime_ms, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(path) DO UPDATE SET
-                    directory = excluded.directory,
-                    hash = excluded.hash,
-                    size = excluded.size,
-                    mtime_ms = excluded.mtime_ms,
-                    updated_at = excluded.updated_at
-            `);
+            const insert = preparePathHashUpsert(this.db);
             validMoves.forEach(({ fromPath, toPath }) => {
                 const entry = select.get(fromPath);
                 if (!entry) return;
                 remove.run(fromPath);
-                insert.run(toPath, path.dirname(toPath), entry.hash, entry.size, entry.mtimeMs, now);
+                writePathHash(insert, toPath, entry, now);
             });
         });
     }
@@ -402,6 +283,26 @@ class Store {
         return this.db.prepare(`
             SELECT tag FROM image_tags WHERE hash = ? ORDER BY tag
         `).all(hash).map(row => row.tag);
+    }
+
+    migrateImageMetadata(legacyHash, hash) {
+        if (!/^[a-f0-9]{32}$/.test(legacyHash) || !/^[a-f0-9]{64}$/.test(hash)) return;
+        if (this.db.prepare('SELECT 1 FROM image_hash_migrations WHERE hash = ?').get(hash)) return;
+
+        // Keep the old records for files not encountered yet. Remember each
+        // destination so opening a second copy cannot resurrect deleted tags.
+        this.runTransaction(() => {
+            this.db.prepare('INSERT INTO image_hash_migrations (hash, legacy_hash) VALUES (?, ?)')
+                .run(hash, legacyHash);
+            this.db.prepare(`
+                INSERT OR IGNORE INTO image_tags (hash, tag)
+                SELECT ?, tag FROM image_tags WHERE hash = ?
+            `).run(hash, legacyHash);
+            this.db.prepare(`
+                INSERT OR IGNORE INTO image_scores (hash, rating, wins, matches, updated_at)
+                SELECT ?, rating, wins, matches, updated_at FROM image_scores WHERE hash = ?
+            `).run(hash, legacyHash);
+        });
     }
 
     addImageTag(hash, tag) {
@@ -463,8 +364,8 @@ class Store {
             .filter(hash => typeof hash === 'string' && hash))];
         const metadata = Object.fromEntries(uniqueHashes.map(hash => [hash, { tags: [], score: null }]));
 
-        for (let offset = 0; offset < uniqueHashes.length; offset += 500) {
-            const chunk = uniqueHashes.slice(offset, offset + 500);
+        for (let offset = 0; offset < uniqueHashes.length; offset += METADATA_QUERY_BATCH_SIZE) {
+            const chunk = uniqueHashes.slice(offset, offset + METADATA_QUERY_BATCH_SIZE);
             const placeholders = chunk.map(() => '?').join(', ');
             this.db.prepare(`
                 SELECT hash, tag FROM image_tags
@@ -487,19 +388,7 @@ class Store {
         if (entries.length === 0) return;
         const now = Date.now();
         this.runTransaction(() => {
-            const statement = this.db.prepare(`
-                INSERT INTO image_scores (hash, rating, wins, matches, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(hash) DO UPDATE SET
-                    rating = excluded.rating,
-                    wins = excluded.wins,
-                    matches = excluded.matches,
-                    updated_at = excluded.updated_at
-            `);
-            entries.forEach(([hash, value]) => {
-                const score = ratingModel.normalize(value);
-                statement.run(hash, score.rating, score.wins, score.matches, now);
-            });
+            upsertImageScores(this.db, entries, now);
         });
     }
 
@@ -507,16 +396,16 @@ class Store {
         const nextScores = isPlainObject(values) ? values : {};
         this.runTransaction(() => {
             this.db.exec('DELETE FROM image_scores');
-            const statement = this.db.prepare(`
-                INSERT INTO image_scores (hash, rating, wins, matches, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-            `);
             const now = Date.now();
-            Object.entries(nextScores).forEach(([hash, value]) => {
-                if (!hash) return;
-                const score = ratingModel.normalize(value);
-                statement.run(hash, score.rating, score.wins, score.matches, now);
-            });
+            upsertImageScores(this.db, Object.entries(nextScores), now);
+            // Old backups use the prefix fingerprint. Full-hash records in
+            // the same backup take precedence over their legacy counterparts.
+            this.db.prepare(`
+                INSERT OR IGNORE INTO image_scores (hash, rating, wins, matches, updated_at)
+                SELECT migration.hash, score.rating, score.wins, score.matches, score.updated_at
+                FROM image_hash_migrations AS migration
+                JOIN image_scores AS score ON score.hash = migration.legacy_hash
+            `).run();
         });
     }
 
@@ -537,6 +426,7 @@ class Store {
                 DELETE FROM image_hashes;
                 DELETE FROM image_tags;
                 DELETE FROM image_scores;
+                DELETE FROM image_hash_migrations;
             `);
         });
         this.data = {};
@@ -548,6 +438,75 @@ class Store {
             this.db = null;
         }
     }
+}
+
+// These writers share SQL and normalization; callers own the transaction so
+// migrations and replacements commit their writes and deletions together.
+function upsertStoreValues(db, entries, updatedAt) {
+    const statement = db.prepare(`
+        INSERT INTO store_values (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+    `);
+    entries.forEach(({ key, value }) => statement.run(key, value, updatedAt));
+}
+
+function preparePathHashUpsert(db) {
+    return db.prepare(`
+        INSERT INTO image_hashes (path, directory, hash, size, mtime_ms, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+            directory = excluded.directory,
+            hash = excluded.hash,
+            size = excluded.size,
+            mtime_ms = excluded.mtime_ms,
+            updated_at = excluded.updated_at
+    `);
+}
+
+function writePathHash(statement, imagePath, entry, updatedAt) {
+    statement.run(imagePath, path.dirname(imagePath), entry.hash, entry.size, entry.mtimeMs, updatedAt);
+}
+
+function upsertPathHashes(db, entries, updatedAt) {
+    const statement = preparePathHashUpsert(db);
+    entries.forEach(({ imagePath, entry }) => writePathHash(statement, imagePath, entry, updatedAt));
+}
+
+function upsertImageScores(db, entries, updatedAt) {
+    const statement = db.prepare(`
+        INSERT INTO image_scores (hash, rating, wins, matches, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(hash) DO UPDATE SET
+            rating = excluded.rating,
+            wins = excluded.wins,
+            matches = excluded.matches,
+            updated_at = excluded.updated_at
+    `);
+    entries.forEach(([hash, value]) => {
+        if (!hash) return;
+        const score = ratingModel.normalize(value);
+        statement.run(hash, score.rating, score.wins, score.matches, updatedAt);
+    });
+}
+
+function insertLegacyImageTags(db, tagsByHash) {
+    const statement = db.prepare('INSERT OR IGNORE INTO image_tags (hash, tag) VALUES (?, ?)');
+    Object.entries(tagsByHash).forEach(([hash, tags]) => {
+        if (!hash || !Array.isArray(tags)) return;
+        tags.forEach(tag => {
+            if (typeof tag === 'string' && tag) statement.run(hash, tag);
+        });
+    });
+}
+
+function normalizePathHashEntries(values) {
+    if (!isPlainObject(values)) return [];
+    return Object.entries(values)
+        .map(([imagePath, value]) => ({ imagePath, entry: normalizeHashEntry(value) }))
+        .filter(({ imagePath, entry }) => imagePath && entry);
 }
 
 function isPlainObject(value) {

@@ -18,7 +18,7 @@ function registerIpcHandlers(deps) {
     } = deps;
 
     const {
-        getAvailablePath
+        reserveAvailablePath
     } = fileOperations;
 
     registerServerImageHandlers({
@@ -28,7 +28,7 @@ function registerIpcHandlers(deps) {
         fsp,
         getMainWindow,
         store,
-        getAvailablePath,
+        reserveAvailablePath,
         getServerDownloadDirectory,
         selectDirectory
     });
@@ -235,6 +235,7 @@ function registerIpcHandlers(deps) {
             if (Object.keys(updates).length > 0) store.setMany(updates);
             if (config.imageScoresByHash && typeof config.imageScoresByHash === 'object') {
                 store.replaceImageScores(config.imageScoresByHash);
+                return { success: true, imageScoresByHash: store.getAllImageScores() };
             }
             return { success: true };
         } catch (error) {

@@ -5,8 +5,8 @@ async function loadServerImages() {
     const progress = document.getElementById('serverImageDownloadProgress');
     const count = Number(countInput?.value);
 
-    if (!Number.isInteger(count) || count < 1 || count > 1000) {
-        status.textContent = '请输入 1 到 1000 的整数';
+    if (!Number.isInteger(count) || count < 1 || count > 9999) {
+        status.textContent = '请输入 1 到 9999 的整数';
         return;
     }
 
@@ -46,7 +46,7 @@ window.electronAPI.onServerImageDownloadProgress((progressInfo) => {
     progress.value = progressInfo.completed || 0;
 
     if (progressInfo.stage === 'deleting') {
-        status.textContent = `下载完成，正在删除服务端 ${progressInfo.succeeded} 张图片…`;
+        status.textContent = `已下载 ${progressInfo.succeeded} 张，正在删除对应服务端图片…`;
         return;
     }
     if (progressInfo.stage === 'delete-failed') {

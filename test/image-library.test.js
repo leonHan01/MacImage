@@ -24,15 +24,16 @@ test('reads cached directory metadata through one interface', async (t) => {
     const imagePath = path.join(directory, 'one.jpg');
     fs.writeFileSync(imagePath, 'image');
     const stats = fs.statSync(imagePath);
+    const hash = 'a'.repeat(64);
     const queriedHashes = [];
     const store = {
         getPathHashesForDirectory: () => ({
-            [imagePath]: { hash: 'hash-one', size: stats.size, mtimeMs: stats.mtimeMs }
+            [imagePath]: { hash, size: stats.size, mtimeMs: stats.mtimeMs }
         }),
         getImageMetadataForHashes: (hashes) => {
             queriedHashes.push(...hashes);
             return {
-                'hash-one': {
+                [hash]: {
                     tags: ['favorite'],
                     score: { rating: 1520, wins: 1, matches: 2 }
                 }
@@ -43,7 +44,7 @@ test('reads cached directory metadata through one interface', async (t) => {
 
     const records = await library.readDirectory(directory);
 
-    assert.deepEqual(queriedHashes, ['hash-one']);
+    assert.deepEqual(queriedHashes, [hash]);
     assert.equal(records.length, 1);
     assert.deepEqual(records[0].tags, ['favorite']);
     assert.deepEqual(records[0].score, { rating: 1520, wins: 1, matches: 2 });
@@ -82,7 +83,7 @@ test('hydrates missing hashes in the background and publishes one metadata chang
     assert.equal(storedPathHashes[imagePath].hash, 'hash:new.jpg');
 });
 
-test('full hashes only candidates that share a fast hash and size', async () => {
+test('full hashes only candidates that share a file size', async () => {
     const hashedPaths = [];
     const library = createLibrary({
         getPathHash: () => null

@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
-    readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
+    readDirectory: (dirPath, requestId) => ipcRenderer.invoke('read-directory', dirPath, requestId),
     onDirectoryImageMetadata: (callback) => ipcRenderer.on(
         'directory-image-metadata',
         (event, data) => callback(data)
@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     processWaterfallPage: (page) => ipcRenderer.invoke('process-waterfall-page', page),
     restoreWaterfallPendingPage: (pageId) => ipcRenderer.invoke('restore-waterfall-pending-page', pageId),
     getWaterfallPendingPaths: () => ipcRenderer.invoke('get-waterfall-pending-paths'),
+    getWaterfallPendingPages: () => ipcRenderer.invoke('get-waterfall-pending-pages'),
     onTrashFolderChanged: (callback) => ipcRenderer.on('trash-folder-changed', (event, path) => callback(path)),
     onUndoDelete: (callback) => ipcRenderer.on('undo-delete', () => callback())
 });

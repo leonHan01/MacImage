@@ -1,9 +1,11 @@
 let isFolderLoading = false;
+let directoryLoadVersion = 0;
 let pendingDirectoryMetadataUpdates = new Map();
 let directoryMetadataRenderTimer = null;
 
 function queueDirectoryMetadataUpdates(data) {
     if (!data || data.dirPath !== currentFolder || !Array.isArray(data.updates)) return;
+    if (data.requestId !== undefined && data.requestId !== directoryLoadVersion) return;
 
     data.updates.forEach((update) => {
         if (update && typeof update.path === 'string') {
@@ -169,23 +171,38 @@ async function openQuickFolder() {
 }
 
 async function loadFolder(folderPath, options = {}) {
+    const version = ++directoryLoadVersion;
     currentFolder = folderPath;
-    resetWaterfallReviewSession();
+    closeModal();
     resetPendingDirectoryMetadataUpdates();
     isFolderLoading = true;
+    imageCollection.replace([]);
+    sortedImages = [];
+    currentFolderEl.textContent = folderPath;
+    currentFolderEl.title = folderPath;
+    renderEmptyImageGrid();
     try {
-        const [folderImages, pendingWaterfallPaths] = await Promise.all([
-            window.electronAPI.readDirectory(folderPath),
-            window.electronAPI.getWaterfallPendingPaths()
+        await waitForWaterfallOperations();
+        if (version !== directoryLoadVersion) return false;
+        const [folderImages, pendingPages] = await Promise.all([
+            window.electronAPI.readDirectory(folderPath, version),
+            window.electronAPI.getWaterfallPendingPages()
         ]);
-        const pendingPathSet = new Set(Array.isArray(pendingWaterfallPaths) ? pendingWaterfallPaths : []);
+        if (version !== directoryLoadVersion) return false;
+        const pendingPathSet = new Set(pendingPages.flatMap(page => page.paths));
+        resetWaterfallReviewSession(folderImages, pendingPages);
         imageCollection.replace(folderImages.filter(img => !pendingPathSet.has(img.path)));
+    } catch (error) {
+        if (version !== directoryLoadVersion) return false;
+        throw error;
     } finally {
-        isFolderLoading = false;
+        if (version === directoryLoadVersion) isFolderLoading = false;
     }
     resetRandomSortOrder();
     duplicateGroups = [];
     duplicateScanCompleted = false;
+    smallImageCandidates = [];
+    smallImageScanCompleted = false;
     currentFolderEl.textContent = folderPath;
     currentFolderEl.title = folderPath;
     if (!options.preserveDeleteHistory) {
@@ -194,6 +211,7 @@ async function loadFolder(folderPath, options = {}) {
     updateOpenCurrentFolderButton();
     refreshAfterImageMembershipChange();
     scheduleDirectoryMetadataRender();
+    return true;
 }
 
 function refreshAfterImageMembershipChange() {
@@ -210,6 +228,9 @@ function refreshAfterImageMembershipChange() {
     updateMigrateSourceFolder();
     renderTagFilter();
     renderDuplicateResults();
+    if (typeof renderSmallImageResults === 'function') {
+        renderSmallImageResults();
+    }
     updateCompetitionLauncherState();
 }
 
@@ -238,7 +259,7 @@ async function loadImageFile(imageInfo) {
     selectedFilterTags = [];
     filterNoTag = false;
     closeModal();
-    await loadFolder(imageInfo.folderPath);
+    if (!await loadFolder(imageInfo.folderPath)) return;
     revealImageInList(imageInfo.filePath);
     await addRecentOpenFile(imageInfo.filePath, imageInfo.folderPath);
 }
@@ -411,55 +432,4 @@ function formatFileSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
-
-function sortImages(imagesToSort) {
-    const sorted = [...imagesToSort];
-    if (currentSort === 'random') {
-        ensureRandomSortRanks(sorted);
-        sorted.sort((a, b) => {
-            const comparison = randomSortRanks.get(a.path) - randomSortRanks.get(b.path);
-            return comparison || a.name.localeCompare(b.name, 'zh-CN');
-        });
-        return sorted;
-    }
-
-    const [field, direction] = currentSort.split('-');
-    
-    sorted.sort((a, b) => {
-        let comparison = 0;
-        
-        if (field === 'name') {
-            comparison = a.name.localeCompare(b.name, 'zh-CN');
-        } else if (field === 'size') {
-            comparison = a.size - b.size;
-        } else if (field === 'date') {
-            comparison = new Date(a.modifiedTime) - new Date(b.modifiedTime);
-        } else if (field === 'score') {
-            comparison = getImageScore(a) - getImageScore(b);
-        }
-        
-        return direction === 'desc' ? -comparison : comparison;
-    });
-    
-    return sorted;
-}
-
-function resetRandomSortOrder() {
-    randomSortRanks = new Map();
-}
-
-function ensureRandomSortRanks(imagesToSort) {
-    const allImagePaths = new Set(images.map(img => img.path));
-    randomSortRanks.forEach((rank, path) => {
-        if (!allImagePaths.has(path)) {
-            randomSortRanks.delete(path);
-        }
-    });
-
-    imagesToSort.forEach(img => {
-        if (!randomSortRanks.has(img.path)) {
-            randomSortRanks.set(img.path, Math.random());
-        }
-    });
 }
