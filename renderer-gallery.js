@@ -38,13 +38,13 @@ function cancelGalleryWork() {
 function renderEmptyImageGrid() {
     cancelGalleryWork();
     updateImageGridViewClass();
+    if (currentViewMode === 'waterfall') {
+        renderFinishedWaterfallPage();
+        return;
+    }
     const isFolderEmpty = images.length === 0;
-    const emptyMessage = currentViewMode === 'waterfall'
-        ? (waterfallSession.snapshot().status || '没有待评分的图片')
-        : (isFolderEmpty ? '此文件夹中没有图片' : '没有匹配所选标签的图片');
-    imageGrid.innerHTML = isFolderEmpty
-        ? renderEmptyState('image', emptyMessage)
-        : renderEmptyState(currentViewMode === 'waterfall' ? 'image' : 'search', emptyMessage);
+    const emptyMessage = isFolderEmpty ? '此文件夹中没有图片' : '没有匹配所选标签的图片';
+    imageGrid.innerHTML = renderEmptyState(isFolderEmpty ? 'image' : 'search', emptyMessage);
 }
 
 function renderEmptyState(type, message) {
@@ -125,6 +125,7 @@ function setViewMode(mode) {
     const nextMode = ['list', 'grid', 'waterfall'].includes(mode) ? mode : 'list';
     if (currentViewMode === nextMode) return;
 
+    if (nextMode !== 'waterfall') void exitWaterfallFullscreen();
     currentViewMode = nextMode;
     if (currentViewMode === 'waterfall') {
         imageGrid.scrollTop = 0;

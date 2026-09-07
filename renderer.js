@@ -4,6 +4,7 @@ bindSettingsEvents();
 bindCompetitionEvents();
 bindModalEvents();
 document.addEventListener('keydown', handleKeyboard);
+document.addEventListener('fullscreenchange', syncWaterfallFullscreen);
 setSidebarCollapsed(isSidebarCollapsed, { persist: false });
 bindElectronEvents();
 

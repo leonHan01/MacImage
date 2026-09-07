@@ -76,6 +76,17 @@ function handleCompetitionKeyboard(event) {
 function handleWaterfallKeyboard(event) {
     if (isEditableTarget(event.target)) return;
 
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        void exitWaterfallFullscreen();
+        return;
+    }
+    if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        if (!event.repeat) void toggleWaterfallFullscreen();
+        return;
+    }
+
     const isUnmodifiedSpace = (event.key === ' ' || event.code === 'Space') &&
         !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
     if (event.key === 'ArrowDown' || isUnmodifiedSpace) {

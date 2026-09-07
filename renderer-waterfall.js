@@ -23,11 +23,7 @@ function getWaterfallView() {
 function renderWaterfallPage() {
     const view = getWaterfallView();
     if (view.pageImages.length === 0) {
-        if (view.canRestore) {
-            renderFinishedWaterfallPage(view);
-            return;
-        }
-        renderEmptyImageGrid();
+        renderFinishedWaterfallPage(view);
         return;
     }
 
@@ -50,6 +46,7 @@ function renderWaterfallPage() {
                         评分图片将移至：${escapeHtml(migrateTargetFolder || '请先选择目标文件夹')}
                     </span>
                 </div>
+                <span class="waterfall-fullscreen-hint">右键 1 分 · ↓ / 空格 下一页 · ↑ 上一页 · Esc 退出</span>
                 <section class="waterfall-summary" aria-label="评分整理统计">
                     ${renderWaterfallStat('本页已评分', readyCount, readySize)}
                     ${renderWaterfallStat('本页待删除', pendingCount, pendingSize, 'danger')}
@@ -67,6 +64,7 @@ function renderWaterfallPage() {
                     <button type="button" class="waterfall-next-btn" data-waterfall-action="next" title="点击或向下滚动以整理后进入下一页" ${view.isProcessing ? 'disabled' : ''}>
                         ${view.isProcessing ? '整理中…' : nextButtonLabel}
                     </button>
+                    ${renderWaterfallFullscreenButton()}
                 </div>
             </header>
             ${view.configurationMessage ? `<p class="waterfall-notice">${escapeHtml(view.configurationMessage)}</p>` : ''}
@@ -80,11 +78,11 @@ function renderWaterfallPage() {
 
 function renderFinishedWaterfallPage(view = getWaterfallView()) {
     imageGrid.innerHTML = `
-        <section class="waterfall-page" aria-label="大图瀑布流评分已完成">
+        <section class="waterfall-page" aria-label="大图瀑布流评分">
             <header class="waterfall-toolbar">
                 <div class="waterfall-toolbar-copy">
-                    <strong>本轮浏览完成</strong>
-                    <span>剩余待清理图片会在退出应用时提交</span>
+                    <strong>${view.canRestore ? '本轮浏览完成' : '没有待评分的图片'}</strong>
+                    ${view.canRestore ? '<span>剩余待清理图片会在退出应用时提交</span>' : ''}
                 </div>
                 <section class="waterfall-summary" aria-label="评分整理统计">
                     ${renderWaterfallStat('待清理（可上翻）', view.pendingImages.length, sumImageSizes(view.pendingImages), 'danger')}
@@ -92,13 +90,14 @@ function renderFinishedWaterfallPage(view = getWaterfallView()) {
                     ${renderWaterfallStat('已提交清理（回收站）', view.deletedCount, view.deletedSize, 'danger')}
                 </section>
                 <div class="waterfall-toolbar-actions">
-                    <button type="button" class="waterfall-config-btn" data-waterfall-action="previous" title="返回上一页待清理图片（方向键上）" ${view.isProcessing ? 'disabled' : ''}>
+                    <button type="button" class="waterfall-config-btn" data-waterfall-action="previous" title="返回上一页待清理图片（方向键上）" ${!view.canRestore || view.isProcessing ? 'disabled' : ''}>
                         上一页
                     </button>
+                    ${renderWaterfallFullscreenButton()}
                 </div>
             </header>
             ${view.status ? `<p class="waterfall-status">${escapeHtml(view.status)}</p>` : ''}
-            ${renderEmptyState('image', '没有更多待评分图片，可按 ↑ 返回上一页')}
+            ${renderEmptyState('image', view.canRestore ? '没有更多待评分图片，可按 ↑ 返回上一页' : '没有待评分的图片')}
         </section>
     `;
 }
@@ -175,6 +174,10 @@ function handleWaterfallGridClick(event) {
     if (!actionButton) return openWaterfallImageFromEvent(event);
 
     const action = actionButton.dataset.waterfallAction;
+    if (action === 'fullscreen') {
+        void toggleWaterfallFullscreen();
+        return true;
+    }
     if (action === 'score') {
         waterfallSession.score(actionButton.dataset.path, actionButton.dataset.score);
         renderWaterfallPage();

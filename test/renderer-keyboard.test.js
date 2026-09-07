@@ -12,7 +12,8 @@ function keyboard({ preview = false, competition = false, settings = false, view
     const actions = Object.fromEntries([
         'showPrevImage', 'showNextImage', 'closeModal', 'deleteCurrentImage',
         'zoomIn', 'zoomOut', 'zoomReset', 'closeCompetition', 'chooseCompetitionWinner',
-        'closeSettings', 'advanceWaterfallPage', 'restorePreviousWaterfallPage'
+        'closeSettings', 'advanceWaterfallPage', 'restorePreviousWaterfallPage',
+        'toggleWaterfallFullscreen', 'exitWaterfallFullscreen'
     ].map(name => [name, (...args) => calls.push([name, ...args])]));
     const context = vm.createContext({
         ...actions,
@@ -97,4 +98,20 @@ test('waterfall paging suppresses repeated actions and modified spaces', () => {
         assert.deepEqual(waterfall(' ', { [modifier]: true }), { calls: [], prevented: false });
     }
     assert.deepEqual(keyboard()('ArrowDown'), { calls: [], prevented: false });
+});
+
+test('fullscreen shortcuts stay in waterfall and respect typing, modifiers and modal priority', () => {
+    const waterfall = keyboard({ view: 'waterfall' });
+    assert.deepEqual(waterfall('f'), { calls: [['toggleWaterfallFullscreen']], prevented: true });
+    assert.deepEqual(waterfall('F'), { calls: [['toggleWaterfallFullscreen']], prevented: true });
+    assert.deepEqual(waterfall('f', { repeat: true }), { calls: [], prevented: true });
+    assert.deepEqual(waterfall('Escape'), { calls: [['exitWaterfallFullscreen']], prevented: true });
+    assert.deepEqual(waterfall('f', { target: { editable: true } }), { calls: [], prevented: false });
+    for (const modifier of ['metaKey', 'ctrlKey', 'altKey', 'shiftKey']) {
+        assert.deepEqual(waterfall('f', { [modifier]: true }), { calls: [], prevented: false });
+    }
+    assert.deepEqual(keyboard()('f'), { calls: [], prevented: false });
+    assert.deepEqual(keyboard({ preview: true, view: 'waterfall' })('f'), {
+        calls: [['favorite', true]], prevented: true
+    });
 });

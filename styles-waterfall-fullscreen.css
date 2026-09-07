@@ -1,0 +1,132 @@
+.waterfall-fullscreen-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.waterfall-fullscreen-hint {
+    display: none;
+}
+
+body.waterfall-fullscreen {
+    --bg-primary: #111114;
+    --bg-secondary: #1c1c21;
+    --bg-tertiary: #292930;
+    --text-primary: #f5f5f7;
+    --text-secondary: #aaaab4;
+    --border-color: #32323a;
+    background: #08080a;
+    color-scheme: dark;
+}
+
+.waterfall-fullscreen .app-container {
+    padding-top: 0;
+    -webkit-app-region: no-drag;
+}
+
+.waterfall-fullscreen .sidebar,
+.waterfall-fullscreen .main-content > .toolbar,
+.waterfall-fullscreen .waterfall-summary,
+.waterfall-fullscreen .waterfall-toolbar-copy > span {
+    display: none;
+}
+
+.waterfall-fullscreen .image-grid.waterfall-view {
+    min-height: 0;
+    padding: 2px;
+    background: #08080a;
+}
+
+.waterfall-fullscreen .waterfall-page {
+    min-width: 0;
+}
+
+.waterfall-fullscreen .waterfall-toolbar {
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    gap: 6px 12px;
+    margin-bottom: 4px;
+    padding: 0 4px;
+}
+
+.waterfall-fullscreen .waterfall-toolbar-copy {
+    flex-shrink: 0;
+}
+
+.waterfall-fullscreen .waterfall-toolbar-copy strong {
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.waterfall-fullscreen .waterfall-fullscreen-hint {
+    display: block;
+    flex: 1;
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.waterfall-fullscreen .waterfall-toolbar-actions {
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.waterfall-fullscreen .waterfall-cards {
+    gap: 2px;
+    grid-template-rows: minmax(0, 1fr);
+}
+
+.waterfall-fullscreen .waterfall-cards--10 {
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.waterfall-fullscreen .waterfall-card {
+    position: relative;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.waterfall-fullscreen .waterfall-card-header {
+    display: none;
+}
+
+.waterfall-fullscreen .waterfall-image-frame {
+    padding: 0;
+    overflow: hidden;
+    background: #000;
+}
+
+.waterfall-fullscreen .waterfall-card-footer {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    min-height: 24px;
+    padding: 4px 6px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+    color: #dddde3;
+    font-size: 11px;
+    pointer-events: none;
+}
+
+.waterfall-fullscreen .waterfall-card-footer strong,
+.waterfall-fullscreen .waterfall-status {
+    color: #6edb8b;
+}
+
+.waterfall-fullscreen .waterfall-notice {
+    color: #ffc166;
+}
+
+.waterfall-fullscreen button:focus-visible {
+    outline: 2px solid #91c4ff;
+    outline-offset: 2px;
+}
+
+@media (max-width: 1200px) {
+    .waterfall-fullscreen .waterfall-fullscreen-hint {
+        display: none;
+    }
+}
