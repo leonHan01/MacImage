@@ -160,11 +160,13 @@ npm run build:dmg
 | `preload.js` | 暴露给渲染进程的安全 IPC 接口 |
 | `store.js` | 配置和图片元数据读写、迁移及事务 |
 | `store-schema.js` | SQLite 表结构、索引及连接设置 |
-| `main-ipc-handlers.js` | 文件夹读取、标签、评分、缩略图、回收站等 IPC 处理 |
+| `main-ipc-handlers.js` | IPC 注册入口、文件夹和回收站操作 |
+| `main-ipc-config.js` | 配置读写及 JSON 导入导出 |
 | `main-ipc-file-operations.js` | 图片迁移、瀑布流整理等文件操作 |
 | `main-ipc-server-images.js` | 服务端图片下载与服务端记录删除 |
 | `image-collection.js` | 图片集合及按内容 hash 共享的元数据 |
 | `image-query.js` | 标签筛选、字段排序和稳定随机顺序，不依赖 DOM |
+| `image-preview-state.js` | 预览选择、路径同步、缩放和拖动状态，不依赖 DOM |
 | `renderer-state.js` | 渲染进程共享状态和模型创建 |
 | `renderer.js` | 主界面启动流程及按功能分组的事件注册 |
 | `renderer-folders.js` | 目录加载、元数据更新和最近文件记录 |
@@ -178,7 +180,9 @@ npm run build:dmg
 
 图片查询每次读取集合中的最新元数据。排序返回新数组；筛选或刷新元数据时保留随机顺序，打开文件夹或重新选择随机排序时重置。`image-query.js` 需在 `renderer-state.js` 之前加载，顺序见 `index.html`。
 
-运行 `npm test` 可验证模型和回归用例，无需启动 Electron。
+`renderer-modal.js` 创建并持有预览状态，其他界面通过 `getCurrentModalImage()` 读取当前图片。删除和迁移只更新图片集合；`renderImages()` 通过 `syncModalWithImages()` 统一同步预览，同路径保留缩放，当前图片移除后选择相邻图片，筛选结果为空时关闭预览。`image-preview-state.js` 需先于 `renderer-modal.js` 加载。
+
+运行 `npm test` 可验证模型、预览交互、回归用例和 HTML 脚本的实际初始化顺序，无需启动 Electron。初始化测试不验证浏览器布局。
 
 数据库迁移和日常写入共用相同的 SQL 写入函数；事务由各操作统一管理，确保替换和迁移的相关变更一起提交。键盘事件依次检查预览、竞赛、设置、瀑布流，仅由匹配的界面处理。
 

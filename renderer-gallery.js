@@ -176,22 +176,9 @@ function calculateListVirtualState(itemCount) {
 function renderVisibleGridItems(version) {
     if (version !== galleryRenderVersion || currentViewMode !== 'grid' || !gridVirtualState) return;
 
-    const { columns, rowHeight, rowCount, itemCount } = gridVirtualState;
-    const scrollTop = imageGrid.scrollTop;
-    const viewportHeight = imageGrid.clientHeight || rowHeight;
-    const firstRow = Math.max(0, Math.floor(scrollTop / rowHeight) - GRID_OVERSCAN_ROWS);
-    const lastRow = Math.min(
-        rowCount - 1,
-        Math.ceil((scrollTop + viewportHeight) / rowHeight) + GRID_OVERSCAN_ROWS
-    );
-    const startIndex = firstRow * columns;
-    const endIndex = Math.min(itemCount, (lastRow + 1) * columns);
     renderVirtualWindow({
         mode: 'grid',
-        startIndex,
-        endIndex,
-        topSpacer: firstRow * rowHeight,
-        bottomSpacer: Math.max(0, (rowCount - lastRow - 1) * rowHeight)
+        ...calculateVisibleImageWindow(gridVirtualState, GRID_OVERSCAN_ROWS)
     });
     queueRenderedGridThumbnails(version);
 }
@@ -199,22 +186,28 @@ function renderVisibleGridItems(version) {
 function renderVisibleListItems(version) {
     if (version !== galleryRenderVersion || currentViewMode !== 'list' || !listVirtualState) return;
 
-    const { rowHeight, rowCount, itemCount } = listVirtualState;
-    const scrollTop = imageGrid.scrollTop;
-    const viewportHeight = imageGrid.clientHeight || rowHeight;
-    const firstRow = Math.max(0, Math.floor(scrollTop / rowHeight) - LIST_OVERSCAN_ROWS);
-    const lastRow = Math.min(
-        rowCount - 1,
-        Math.ceil((scrollTop + viewportHeight) / rowHeight) + LIST_OVERSCAN_ROWS
-    );
-
     renderVirtualWindow({
         mode: 'list',
-        startIndex: firstRow,
-        endIndex: Math.min(itemCount, lastRow + 1),
+        ...calculateVisibleImageWindow(listVirtualState, LIST_OVERSCAN_ROWS)
+    });
+}
+
+function calculateVisibleImageWindow(virtualState, overscanRows) {
+    const { columns = 1, rowHeight, rowCount, itemCount } = virtualState;
+    const scrollTop = imageGrid.scrollTop;
+    const viewportHeight = imageGrid.clientHeight || rowHeight;
+    const firstRow = Math.max(0, Math.floor(scrollTop / rowHeight) - overscanRows);
+    const lastRow = Math.min(
+        rowCount - 1,
+        Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscanRows
+    );
+
+    return {
+        startIndex: firstRow * columns,
+        endIndex: Math.min(itemCount, (lastRow + 1) * columns),
         topSpacer: firstRow * rowHeight,
         bottomSpacer: Math.max(0, (rowCount - lastRow - 1) * rowHeight)
-    });
+    };
 }
 
 function renderVirtualWindow({ mode, startIndex, endIndex, topSpacer, bottomSpacer }) {
@@ -238,7 +231,7 @@ function renderVirtualWindow({ mode, startIndex, endIndex, topSpacer, bottomSpac
         }
     }
 
-    const visibleNodes = [];
+    let previousNode = dom.topSpacer;
     for (let index = startIndex; index < endIndex; index++) {
         let node = dom.itemNodes.get(index);
         if (!node) {
@@ -246,18 +239,14 @@ function renderVirtualWindow({ mode, startIndex, endIndex, topSpacer, bottomSpac
             updateVirtualItemNode(node, sortedImages[index], index, mode);
             dom.itemNodes.set(index, node);
         }
-        visibleNodes.push(node);
-    }
-
-    dom.startIndex = startIndex;
-    dom.endIndex = endIndex;
-    let previousNode = dom.topSpacer;
-    visibleNodes.forEach(node => {
         if (node.previousSibling !== previousNode) {
             imageGrid.insertBefore(node, previousNode.nextSibling || dom.bottomSpacer);
         }
         previousNode = node;
-    });
+    }
+
+    dom.startIndex = startIndex;
+    dom.endIndex = endIndex;
 }
 
 function getVirtualGalleryDom(mode) {
@@ -315,23 +304,35 @@ function refreshVirtualGridLayout() {
     if (currentViewMode === 'waterfall') {
         renderWaterfallPage();
     } else if (currentViewMode === 'grid') {
-        gridVirtualState = calculateGridVirtualState(sortedImages.length);
-        renderVisibleGridItems(galleryRenderVersion);
+        renderVirtualGrid();
     } else {
-        listVirtualState = calculateListVirtualState(sortedImages.length);
-        renderVisibleListItems(galleryRenderVersion);
+        renderVirtualList();
     }
 }
 
 function queueRenderedGridThumbnails(version) {
-    imageGrid.querySelectorAll('.thumbnail-image[data-thumb-index]').forEach(thumbnail => {
+    if (version !== galleryRenderVersion || currentViewMode !== 'grid') return;
+    const thumbnails = imageGrid.querySelectorAll('.thumbnail-image[data-thumb-index]');
+    const visibleIndexes = new Set(Array.from(thumbnails, thumbnail => Number(thumbnail.dataset.thumbIndex)));
+    // Keep the waiting queue bounded by the buffered viewport. Already running
+    // requests may finish and populate the cache for a later scroll back.
+    thumbnailQueue = thumbnailQueue.filter(task => {
+        if (task.version !== version) return false;
+        if (visibleIndexes.has(task.index)) return true;
+        thumbnailQueuedIndexes.delete(task.index);
+        return false;
+    });
+
+    thumbnails.forEach(thumbnail => {
         const index = Number(thumbnail.dataset.thumbIndex);
         const img = sortedImages[index];
         if (!img || thumbnail.classList.contains('loaded') || thumbnailQueuedIndexes.has(index)) return;
 
         const cacheKey = getThumbnailCacheKey(img);
         if (thumbnailMemoryCache.has(cacheKey)) {
-            applyThumbnailResult(index, thumbnailMemoryCache.get(cacheKey), version);
+            const dataUrl = thumbnailMemoryCache.get(cacheKey);
+            rememberThumbnail(cacheKey, dataUrl);
+            applyThumbnailResult(index, dataUrl, version);
             return;
         }
 
@@ -350,6 +351,14 @@ function pumpThumbnailQueue() {
     ) {
         const task = thumbnailQueue.shift();
         if (task.version !== galleryRenderVersion) {
+            continue;
+        }
+
+        const cacheKey = getThumbnailCacheKey(task.img);
+        if (thumbnailMemoryCache.has(cacheKey)) {
+            const dataUrl = thumbnailMemoryCache.get(cacheKey);
+            rememberThumbnail(cacheKey, dataUrl);
+            applyThumbnailResult(task.index, dataUrl, task.version);
             thumbnailQueuedIndexes.delete(task.index);
             continue;
         }
@@ -357,7 +366,9 @@ function pumpThumbnailQueue() {
         thumbnailActiveCount++;
         loadGridThumbnail(task.img, task.index, task.version).finally(() => {
             thumbnailActiveCount--;
-            thumbnailQueuedIndexes.delete(task.index);
+            if (task.version === galleryRenderVersion) {
+                thumbnailQueuedIndexes.delete(task.index);
+            }
             pumpThumbnailQueue();
         });
     }
@@ -375,11 +386,10 @@ async function loadGridThumbnail(img, index, version) {
         result = { success: false, error: error.message };
     }
 
-    if (version !== galleryRenderVersion || currentViewMode !== 'grid') return;
-
     if (result && result.success) {
         rememberThumbnail(getThumbnailCacheKey(img), result.dataUrl);
     }
+    if (version !== galleryRenderVersion || currentViewMode !== 'grid') return;
     applyThumbnailResult(index, result && result.success ? result.dataUrl : null, version);
 }
 
@@ -530,7 +540,7 @@ function renderFilterTag(tag) {
 }
 
 function getNoTagCount() {
-    return images.filter(img => getImageTags(img).length === 0).length;
+    return imageCollection.getUntaggedCount();
 }
 
 function toggleFilterTag(tagName) {

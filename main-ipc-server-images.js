@@ -1,8 +1,9 @@
+const { mapWithConcurrency } = require('./async-utils');
+
 const LEON_API_BASE_URL = 'http://192.168.3.35:8080';
 const SERVER_IMAGE_LOAD_LIMIT = 9_999;
 const DEFAULT_SERVER_DOWNLOAD_CONCURRENCY = 5;
 const MAX_SERVER_DOWNLOAD_CONCURRENCY = 10;
-const { mapWithConcurrency } = require('./async-utils');
 
 function registerServerImageHandlers(deps) {
     const {
@@ -25,14 +26,7 @@ function registerServerImageHandlers(deps) {
 
         let pictures;
         try {
-            const response = await fetch(`${LEON_API_BASE_URL}/api/leon/pictures?limit=${count}&shuffle=true`);
-            if (!response.ok) {
-                throw new Error(`服务端图片列表请求失败（HTTP ${response.status}）`);
-            }
-            pictures = await response.json();
-            if (!Array.isArray(pictures)) {
-                throw new Error('服务端返回的图片列表格式无效');
-            }
+            pictures = await fetchServerPictures(count);
         } catch (error) {
             return { success: false, error: `无法读取服务端图片：${error.message}` };
         }
@@ -43,9 +37,7 @@ function registerServerImageHandlers(deps) {
 
         const downloadDirectory = store.get('serverDownloadFolder') || getServerDownloadDirectory();
         const downloadConcurrency = normalizeServerDownloadConcurrency(
-            store.get('serverDownloadConcurrency'),
-            DEFAULT_SERVER_DOWNLOAD_CONCURRENCY,
-            MAX_SERVER_DOWNLOAD_CONCURRENCY
+            store.get('serverDownloadConcurrency')
         );
         await fsp.mkdir(downloadDirectory, { recursive: true });
 
@@ -67,44 +59,18 @@ function registerServerImageHandlers(deps) {
         const downloadResults = await mapWithConcurrency(pictures, downloadConcurrency, async (picture) => {
             let destination;
             try {
-                if (!picture || !Number.isInteger(picture.id) || typeof picture.imageUrl !== 'string') {
-                    throw new Error('图片数据缺少 id 或 imageUrl');
-                }
-
-                const imageUrl = new URL(picture.imageUrl);
-                if (!['http:', 'https:'].includes(imageUrl.protocol)) {
-                    throw new Error('图片地址必须使用 HTTP 或 HTTPS');
-                }
-
-                const imageResponse = await fetch(imageUrl);
-                if (!imageResponse.ok) {
-                    throw new Error(`图片下载失败（HTTP ${imageResponse.status}）`);
-                }
-
-                const sourceName = picture.fileName || path.basename(imageUrl.pathname) || `${picture.id}.jpg`;
-                const safeName = path.basename(sourceName).replace(/[^a-zA-Z0-9._-]/g, '_') || `${picture.id}.jpg`;
-                const contents = Buffer.from(await imageResponse.arrayBuffer());
+                const { fileName, contents } = await fetchServerImage(picture, path);
                 destination = await reserveAvailablePath(
-                    path.join(downloadDirectory, safeName),
-                    (index) => path.join(downloadDirectory, `${picture.id}-${index}-${safeName}`)
+                    path.join(downloadDirectory, fileName),
+                    (index) => path.join(downloadDirectory, `${picture.id}-${index}-${fileName}`)
                 );
                 await fsp.writeFile(destination, contents);
 
                 successfulCount++;
                 reportProgress('deleting');
-                try {
-                    const deleteResponse = await fetch(`${LEON_API_BASE_URL}/api/leon/pictures`, {
-                        method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pictureIds: [picture.id] })
-                    });
-                    if (!deleteResponse.ok) {
-                        throw new Error(`服务端删除请求失败（HTTP ${deleteResponse.status}）`);
-                    }
-                    return { success: true, id: picture.id, path: destination, deleted: true };
-                } catch (error) {
-                    return { success: true, id: picture.id, path: destination, deleted: false, deletionError: error.message };
-                }
+                // A remote deletion failure must keep the successfully saved file.
+                const deletion = await deleteServerPicture(picture.id);
+                return { success: true, id: picture.id, path: destination, ...deletion };
             } catch (error) {
                 if (destination) {
                     await fsp.unlink(destination).catch(() => {});
@@ -117,28 +83,9 @@ function registerServerImageHandlers(deps) {
             }
         });
 
-        const downloaded = downloadResults.filter(result => result.success);
-        const failures = downloadResults
-            .filter(result => !result.success)
-            .map(result => ({ id: result.id ?? null, error: result.error }));
-
-        const deletionFailures = downloaded
-            .filter(result => !result.deleted)
-            .map(result => ({ id: result.id, error: result.deletionError }));
-        const deletionError = deletionFailures.length > 0
-            ? `${deletionFailures.length} 张图片删除失败：${deletionFailures.map(failure => failure.error).join('；')}`
-            : null;
-
-        reportProgress(deletionError ? 'delete-failed' : 'completed');
-        return {
-            success: downloaded.length > 0,
-            downloadDirectory,
-            downloadedCount: downloaded.length,
-            deletedCount: downloaded.length - deletionFailures.length,
-            deletionError,
-            deletionFailures,
-            failures
-        };
+        const summary = summarizeServerDownloads(downloadResults, downloadDirectory);
+        reportProgress(summary.deletionError ? 'delete-failed' : 'completed');
+        return summary;
     });
 
     ipcMain.handle('get-server-download-folder', () => {
@@ -154,9 +101,7 @@ function registerServerImageHandlers(deps) {
     });
 
     ipcMain.handle('get-server-download-concurrency', () => normalizeServerDownloadConcurrency(
-        store.get('serverDownloadConcurrency'),
-        DEFAULT_SERVER_DOWNLOAD_CONCURRENCY,
-        MAX_SERVER_DOWNLOAD_CONCURRENCY
+        store.get('serverDownloadConcurrency')
     ));
 
     ipcMain.handle('set-server-download-concurrency', (event, concurrency) => {
@@ -169,9 +114,82 @@ function registerServerImageHandlers(deps) {
     });
 }
 
-function normalizeServerDownloadConcurrency(value, fallback, maximum) {
+async function fetchServerPictures(count) {
+    const response = await fetch(`${LEON_API_BASE_URL}/api/leon/pictures?limit=${count}&shuffle=true`);
+    if (!response.ok) {
+        throw new Error(`服务端图片列表请求失败（HTTP ${response.status}）`);
+    }
+    const pictures = await response.json();
+    if (!Array.isArray(pictures)) {
+        throw new Error('服务端返回的图片列表格式无效');
+    }
+    return pictures;
+}
+
+async function fetchServerImage(picture, path) {
+    if (!picture || !Number.isInteger(picture.id) || typeof picture.imageUrl !== 'string') {
+        throw new Error('图片数据缺少 id 或 imageUrl');
+    }
+
+    const imageUrl = new URL(picture.imageUrl);
+    if (!['http:', 'https:'].includes(imageUrl.protocol)) {
+        throw new Error('图片地址必须使用 HTTP 或 HTTPS');
+    }
+
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+        throw new Error(`图片下载失败（HTTP ${response.status}）`);
+    }
+
+    const sourceName = picture.fileName || path.basename(imageUrl.pathname) || `${picture.id}.jpg`;
+    const fileName = path.basename(sourceName).replace(/[^a-zA-Z0-9._-]/g, '_') || `${picture.id}.jpg`;
+    return { fileName, contents: Buffer.from(await response.arrayBuffer()) };
+}
+
+async function deleteServerPicture(pictureId) {
+    try {
+        const response = await fetch(`${LEON_API_BASE_URL}/api/leon/pictures`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pictureIds: [pictureId] })
+        });
+        if (!response.ok) {
+            throw new Error(`服务端删除请求失败（HTTP ${response.status}）`);
+        }
+        return { deleted: true };
+    } catch (error) {
+        return { deleted: false, deletionError: error.message };
+    }
+}
+
+function summarizeServerDownloads(results, downloadDirectory) {
+    const downloaded = results.filter(result => result.success);
+    const failures = results
+        .filter(result => !result.success)
+        .map(result => ({ id: result.id ?? null, error: result.error }));
+    const deletionFailures = downloaded
+        .filter(result => !result.deleted)
+        .map(result => ({ id: result.id, error: result.deletionError }));
+    const deletionError = deletionFailures.length > 0
+        ? `${deletionFailures.length} 张图片删除失败：${deletionFailures.map(failure => failure.error).join('；')}`
+        : null;
+
+    return {
+        success: downloaded.length > 0,
+        downloadDirectory,
+        downloadedCount: downloaded.length,
+        deletedCount: downloaded.length - deletionFailures.length,
+        deletionError,
+        deletionFailures,
+        failures
+    };
+}
+
+function normalizeServerDownloadConcurrency(value) {
     const number = Number(value);
-    return Number.isInteger(number) && number >= 1 && number <= maximum ? number : fallback;
+    return Number.isInteger(number) && number >= 1 && number <= MAX_SERVER_DOWNLOAD_CONCURRENCY
+        ? number
+        : DEFAULT_SERVER_DOWNLOAD_CONCURRENCY;
 }
 
 module.exports = registerServerImageHandlers;

@@ -161,11 +161,13 @@ On macOS, this directory is typically:
 | `preload.js` | Secure IPC API exposed to the renderer process |
 | `store.js` | Settings and image metadata persistence, migrations, and transactions |
 | `store-schema.js` | SQLite tables, indexes, and connection pragmas |
-| `main-ipc-handlers.js` | Folder reading, tags, ratings, thumbnails, trash, and related IPC handlers |
+| `main-ipc-handlers.js` | IPC registration, folder actions, and trash operations |
+| `main-ipc-config.js` | Settings persistence and JSON import/export |
 | `main-ipc-file-operations.js` | Image migration and waterfall file operations |
 | `main-ipc-server-images.js` | Server image downloads and server record deletion |
 | `image-collection.js` | Image collection and shared metadata indexed by content hash |
 | `image-query.js` | Tag filtering, field sorting, and stable random ordering without DOM dependencies |
+| `image-preview-state.js` | Preview selection, path reconciliation, zoom, and dragging without DOM dependencies |
 | `renderer-state.js` | Shared renderer state and model creation |
 | `renderer.js` | UI startup and event registration grouped by feature |
 | `renderer-folders.js` | Directory loading, metadata updates, and recent files |
@@ -179,7 +181,9 @@ On macOS, this directory is typically:
 
 Image queries read the current collection metadata on each call. Sorting returns a new array; random ordering stays stable while filtering or refreshing metadata, and resets when opening a folder or selecting random sort again. Load `image-query.js` before `renderer-state.js`, as shown in `index.html`.
 
-Run `npm test` to check the models and regression cases without launching Electron.
+`renderer-modal.js` creates and owns the preview state; other views read the current image through `getCurrentModalImage()`. Deletion and migration update the image collection. `renderImages()` then calls `syncModalWithImages()` to retain the current path and zoom, select a neighbor when that image is removed, or close the preview when no visible images remain. Load `image-preview-state.js` before `renderer-modal.js`.
+
+Run `npm test` to check models, preview interactions, regressions, and the actual HTML script initialization order without launching Electron. The initialization test does not validate browser layout.
 
 Store migrations and normal writes share the same SQL writers. Each operation owns its transaction, so replacements and migrations commit all related changes together. Keyboard routing checks preview, competition, settings, then waterfall in that order; only the selected context handles the event.
 

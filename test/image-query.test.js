@@ -108,3 +108,24 @@ test('equal random ranks use the same Chinese filename ordering as name sort', (
 
     assert.deepEqual(names(query.sort(collection.items, 'random')), ['阿', '波', '中']);
 });
+
+test('expensive sort values are read once per image and refreshed on the next sort', () => {
+    let dateReads = 0;
+    let ratingReads = 0;
+    const images = Array.from({ length: 100 }, (_, index) => ({
+        path: `/${index}.jpg`,
+        name: String(index),
+        score: (index * 37) % 100,
+        get modifiedTime() { dateReads++; return new Date(this.score * 1000).toISOString(); }
+    }));
+    const collection = createCollection(images);
+    const query = createQuery({ collection, getRating: image => { ratingReads++; return image.score; } });
+    assert.equal(query.sort(images, 'date-asc')[0].score, 0);
+    assert.equal(dateReads, images.length);
+    assert.equal(query.sort(images, 'score-desc')[0].score, 99);
+    assert.equal(ratingReads, images.length);
+
+    images[0].score = 200;
+    assert.equal(query.sort(images, 'date-desc')[0], images[0]);
+    assert.equal(query.sort(images, 'score-desc')[0], images[0]);
+});

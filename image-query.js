@@ -8,6 +8,8 @@
 
     root.MacImageQuery = imageQuery;
 }(typeof globalThis === 'object' ? globalThis : this, () => {
+    const nameCollator = new Intl.Collator('zh-CN');
+
     function create({ collection, getRating, random = Math.random }) {
         const randomRanks = new Map();
 
@@ -33,6 +35,15 @@
 
             const [field, direction] = order.split('-');
             const multiplier = direction === 'desc' ? -1 : 1;
+            if (field === 'date' || field === 'score') {
+                // Parse dates and normalize ratings once per image, not on
+                // every comparison. Recompute on each sort to reflect edits.
+                return sorted.map(image => ({
+                    image,
+                    value: field === 'date' ? new Date(image.modifiedTime).getTime() : getRating(image)
+                })).sort((first, second) => multiplier * (first.value - second.value))
+                    .map(entry => entry.image);
+            }
             return sorted.sort((first, second) => (
                 multiplier * compareField(first, second, field)
             ));
@@ -44,10 +55,6 @@
                     return compareNames(first, second);
                 case 'size':
                     return first.size - second.size;
-                case 'date':
-                    return new Date(first.modifiedTime) - new Date(second.modifiedTime);
-                case 'score':
-                    return getRating(first) - getRating(second);
                 default:
                     return 0;
             }
@@ -73,7 +80,7 @@
     }
 
     function compareNames(first, second) {
-        return first.name.localeCompare(second.name, 'zh-CN');
+        return nameCollator.compare(first.name, second.name);
     }
 
     return Object.freeze({ create });

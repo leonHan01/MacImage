@@ -1,11 +1,5 @@
 let smallImageDeleteInProgress = false;
 
-function getSavedSmallImageThresholdKb() {
-    return MacImageSmallImageUtils.normalizeThresholdKb(
-        localStorage.getItem('macimage:smallImageThresholdKb')
-    );
-}
-
 function getSmallImageThresholdKb() {
     const input = document.getElementById('smallImageThresholdInput');
     return MacImageSmallImageUtils.parseThresholdKb(input?.value);
@@ -189,12 +183,6 @@ async function deleteSmallImages() {
     smallImageDeleteInProgress = true;
     renderSmallImageResults();
 
-    const modalWasOpen = imageModal.classList.contains('show');
-    const modalImagePath = modalWasOpen && currentImageIndex >= 0 && currentImageIndex < sortedImages.length
-        ? sortedImages[currentImageIndex].path
-        : null;
-    const previousImageIndex = currentImageIndex;
-
     try {
         const result = await window.electronAPI.deleteImages(candidates.map(image => image.path));
         if (!result.success) {
@@ -213,7 +201,8 @@ async function deleteSmallImages() {
         )));
 
         smallImageCandidates = smallImageCandidates.filter(image => !deletedPaths.includes(image.path));
-        refreshAfterSmallImageRemoval(deletedPaths, { modalWasOpen, modalImagePath, previousImageIndex });
+        imageCollection.remove(deletedPaths);
+        refreshAfterImageMembershipChange();
 
         if (failures.length > 0) {
             const failedNames = failures.slice(0, 5)
@@ -226,21 +215,4 @@ async function deleteSmallImages() {
         smallImageDeleteInProgress = false;
         renderSmallImageResults();
     }
-}
-
-function refreshAfterSmallImageRemoval(deletedPaths, modalState = null) {
-    imageCollection.remove(deletedPaths);
-    refreshAfterImageMembershipChange();
-
-    if (!modalState?.modalWasOpen) return;
-    if (sortedImages.length === 0) {
-        closeModal();
-        return;
-    }
-
-    const retainedIndex = sortedImages.findIndex(image => image.path === modalState.modalImagePath);
-    currentImageIndex = retainedIndex >= 0
-        ? retainedIndex
-        : Math.min(modalState.previousImageIndex, sortedImages.length - 1);
-    updateModalImage();
 }

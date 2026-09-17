@@ -258,22 +258,9 @@ async function moveNewlyTaggedImageToTarget(imagePath) {
         return false;
     }
 
-    const nextImageIndex = currentImageIndex;
     imageCollection.remove(imagePath);
     refreshAfterImageMembershipChange();
-
-    if (sortedImages.length === 0) {
-        closeModal();
-        return true;
-    }
-
-    currentImageIndex = Math.min(Math.max(nextImageIndex, 0), sortedImages.length - 1);
-    resetImageTransform();
-    updateModalImage();
-    updateZoomDisplay();
-    updateImageCursor();
-    recordCurrentImageOpen();
-    imageModal.classList.add('show');
+    if (imageModal.classList.contains('show')) recordCurrentImageOpen();
     return true;
 }
 

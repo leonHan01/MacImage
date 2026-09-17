@@ -10,7 +10,7 @@ function registerTestHandlers(store, overrides = {}) {
     const ipcMain = { handle: (name, handler) => { handlers[name] = handler; } };
     registerIpcHandlers({
         ipcMain,
-        dialog: {},
+        dialog: overrides.dialog || {},
         shell: {},
         path,
         fsp: fs.promises,
@@ -112,4 +112,93 @@ test('does not register global image metadata snapshot IPC handlers', () => {
 
     assert.equal(handlers['get-image-tags'], undefined);
     assert.equal(handlers['get-image-scores'], undefined);
+});
+
+test('configuration IPC preserves folder and recent-file setting defaults', () => {
+    const settings = new Map();
+    const handlers = registerTestHandlers({
+        get: key => settings.get(key),
+        set: (key, value) => settings.set(key, value)
+    });
+
+    assert.equal(handlers['get-categories'](), null);
+    assert.equal(handlers['get-quick-open-folders'](), null);
+    assert.deepEqual(handlers['get-recent-open-files'](), []);
+
+    const categories = [{ name: 'Favorites', path: '/favorites' }];
+    const folders = ['/photos'];
+    const recentFiles = ['/photos/one.jpg'];
+    assert.equal(handlers['save-categories']({}, categories), true);
+    assert.equal(handlers['save-quick-open-folders']({}, folders), true);
+    assert.equal(handlers['save-recent-open-files']({}, recentFiles), true);
+    assert.deepEqual(handlers['get-categories'](), categories);
+    assert.deepEqual(handlers['get-quick-open-folders'](), folders);
+    assert.deepEqual(handlers['get-recent-open-files'](), recentFiles);
+
+    assert.equal(handlers['save-recent-open-files']({}, null), true);
+    assert.deepEqual(handlers['get-recent-open-files'](), []);
+});
+
+test('configuration IPC round-trips settings and image scores through an exported file', async () => {
+    const tempDir = await fs.promises.mkdtemp('/private/tmp/macimage-config-');
+    try {
+        const filePath = path.join(tempDir, 'config.json');
+        const originalTags = ['favorite'];
+        const originalCategories = [{ name: 'Favorites', path: '/favorites' }];
+        const originalScores = { 'hash:one.jpg': { rating: 1600, wins: 1, matches: 1 } };
+        const settings = { tags: originalTags, categories: originalCategories };
+        let imageScores = originalScores;
+        const handlers = registerTestHandlers({
+            get: key => settings[key],
+            setMany: updates => Object.assign(settings, updates),
+            getAllImageScores: () => imageScores,
+            replaceImageScores: scores => { imageScores = scores; }
+        }, {
+            dialog: {
+                showSaveDialog: async () => ({ filePath }),
+                showOpenDialog: async () => ({ filePaths: [filePath] })
+            }
+        });
+
+        const exported = await handlers['export-config']();
+        assert.equal(exported.success, true);
+        assert.equal(exported.config.version, '1.0');
+        assert.equal(Number.isNaN(Date.parse(exported.config.exportTime)), false);
+        assert.deepEqual(await handlers['save-export-file']({}, exported.config), {
+            success: true,
+            filePath
+        });
+
+        settings.tags = [];
+        settings.categories = null;
+        imageScores = {};
+
+        const opened = await handlers['open-import-file']();
+        assert.equal(opened.success, true);
+        assert.deepEqual(await handlers['import-config']({}, opened.config), {
+            success: true,
+            imageScoresByHash: originalScores
+        });
+        assert.deepEqual(settings.tags, originalTags);
+        assert.deepEqual(settings.categories, originalCategories);
+        assert.deepEqual(imageScores, originalScores);
+    } finally {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('configuration IPC preserves cancelled dialog and invalid import responses', async () => {
+    const handlers = registerTestHandlers({}, {
+        dialog: {
+            showSaveDialog: async () => ({}),
+            showOpenDialog: async () => ({ filePaths: [] })
+        }
+    });
+
+    assert.deepEqual(await handlers['save-export-file']({}, {}), { success: false, cancelled: true });
+    assert.deepEqual(await handlers['open-import-file'](), { success: false, cancelled: true });
+    assert.deepEqual(await handlers['import-config']({}, null), {
+        success: false,
+        error: '无效的配置数据'
+    });
 });

@@ -1,14 +1,7 @@
 let editingTagName = null;
 
 function getTagCount(tagName) {
-    let count = 0;
-    images.forEach(img => {
-        const tags = getImageTags(img);
-        if (tags.includes(tagName)) {
-            count++;
-        }
-    });
-    return count;
+    return imageCollection.getTagCount(tagName);
 }
 
 function renderTagList() {
@@ -129,9 +122,8 @@ async function updateTagShortcut(tagName, shortcutValue) {
     await window.electronAPI.saveTags(allTags);
     renderTagList();
 
-    if (currentImageIndex >= 0 && currentImageIndex < sortedImages.length) {
-        renderModalTagList(sortedImages[currentImageIndex]);
-    }
+    const image = getCurrentModalImage();
+    if (image) renderModalTagList(image);
 }
 
 async function saveTagFromForm() {
@@ -233,9 +225,8 @@ async function ensureTagExists(name, category = 'other') {
 }
 
 async function addTagToCurrentModalImage(tagName) {
-    if (currentImageIndex < 0 || currentImageIndex >= sortedImages.length) return;
-
-    const img = sortedImages[currentImageIndex];
+    const img = getCurrentModalImage();
+    if (!img) return;
     if (!getImageTags(img).includes(tagName)) {
         await addTagToImage(img.path, tagName);
         if (await moveNewlyTaggedImageToTarget(img.path)) {

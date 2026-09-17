@@ -212,12 +212,12 @@ test('filtering out the previewed image keeps the display and delete target cons
             getRating: image => require('../rating-model').normalize(collection.getScore(image)).rating
         }),
         currentSort: 'name-asc',
-        sortedImages: [...collection.items], currentImageIndex: 0, currentViewMode: 'list',
-        selectedFilterTags: ['keep'], filterNoTag: false, isDeletingCurrentImage: false,
-        currentZoom: 1, imageTranslateX: 0, imageTranslateY: 0,
-        imageModal: { classList: { contains: () => true, remove: noop } },
+        sortedImages: [...collection.items], currentViewMode: 'list',
+        selectedFilterTags: ['keep'], filterNoTag: false,
+        imageModal: { classList: { contains: () => true, add: noop, remove: noop } },
         document: { getElementById: id => dom[id] },
         MacImageRating: require('../rating-model'),
+        MacImagePreviewState: require('../image-preview-state'),
         toFileUrl: file => `file://${file}`, getImageTags: collection.getTags,
         removeTagFromImage: async file => { collection.applyMetadata({ path: file, tags: [] }); return []; },
         window: { electronAPI: { deleteImage: async file => { deleteTarget = file; return { success: false }; } } },
@@ -225,21 +225,21 @@ test('filtering out the previewed image keeps the display and delete target cons
     });
     loadScript(context, 'renderer-gallery.js');
     loadScript(context, 'renderer-modal.js');
-    for (const name of ['renderModalTagList', 'cancelGalleryWork', 'updateImageGridViewClass', 'renderVirtualList', 'renderEmptyImageGrid', 'renderTagFilter', 'updateImageCount', 'recordCurrentImageOpen']) {
+    for (const name of ['setModalTagsExpanded', 'renderModalTagList', 'cancelGalleryWork', 'updateImageGridViewClass', 'renderVirtualList', 'renderEmptyImageGrid', 'renderTagFilter', 'updateImageCount', 'recordCurrentImageOpen']) {
         context[name] = noop;
     }
-    context.updateModalImage();
+    context.openImageModal(0);
     await context.toggleModalImageTag('/photos/A.jpg', 'keep', { autoAdvance: true });
     assert.equal(dom.modalImage.src, 'file:///photos/B.jpg');
     await context.deleteCurrentImage();
     assert.equal(dom.modalImage.src, `file://${deleteTarget}`);
     collection.applyMetadata({ path: '/photos/A.jpg', tags: ['keep'] });
     context.renderImages();
-    assert.equal(context.currentImageIndex, 1);
+    assert.equal(dom.modalImageIndex.textContent, '2 / 2');
     assert.equal(dom.modalImage.src, 'file:///photos/B.jpg');
     collection.applyMetadata(collection.items.map(image => ({ path: image.path, tags: [] })));
     context.renderImages();
-    assert.equal(context.currentImageIndex, -1);
+    assert.equal(context.getCurrentModalImage(), null);
 });
 
 test('a late directory response cannot overwrite the latest selected folder', async () => {

@@ -1,11 +1,14 @@
+const modalPreviewState = MacImagePreviewState.create();
+const WHEEL_NAVIGATION_COOLDOWN_MS = 220;
 let modalTagsExpanded = false;
-let currentModalImagePath = null;
+let closeModalOnImageClick = false;
+let isDeletingCurrentImage = false;
+let lastWheelNavigationTime = 0;
 
 function openImageModal(index, { closeOnImageClick = false } = {}) {
-    currentImageIndex = index;
+    if (!modalPreviewState.select(sortedImages, index)) return;
     closeModalOnImageClick = closeOnImageClick;
     setModalTagsExpanded(false);
-    resetImageTransform();
     updateModalImage();
     updateZoomDisplay();
     imageModal.classList.add('show');
@@ -35,49 +38,40 @@ function toggleModalTags() {
     setModalTagsExpanded(!modalTagsExpanded);
 }
 
-
 function closeModal() {
     imageModal.classList.remove('show');
-    currentImageIndex = -1;
-    currentModalImagePath = null;
+    modalPreviewState.close();
     closeModalOnImageClick = false;
-    resetImageTransform();
 }
 
-function resetImageTransform() {
-    currentZoom = 1;
-    imageTranslateX = 0;
-    imageTranslateY = 0;
+function getCurrentModalImage() {
+    const { index, imagePath } = modalPreviewState.snapshot();
+    const image = sortedImages[index];
+    return image?.path === imagePath ? image : null;
 }
 
 function updateModalImage() {
-    if (currentImageIndex < 0 || currentImageIndex >= sortedImages.length) return;
+    const img = getCurrentModalImage();
+    if (!img) return;
     
-    const img = sortedImages[currentImageIndex];
-    currentModalImagePath = img.path;
     const modalImage = document.getElementById('modalImage');
     modalImage.src = toFileUrl(img.path);
     modalImage.title = '双击或按 F 添加或取消红心标签';
-    modalImage.style.transform = `scale(${currentZoom}) translate(${imageTranslateX}px, ${imageTranslateY}px)`;
+    updateModalImageTransform();
     document.getElementById('modalFilename').textContent = img.name;
     document.getElementById('modalScore').textContent = formatImageRating(img);
-    document.getElementById('modalImageIndex').textContent = `${currentImageIndex + 1} / ${sortedImages.length}`;
+    document.getElementById('modalImageIndex').textContent = `${modalPreviewState.snapshot().index + 1} / ${sortedImages.length}`;
     
     renderModalTagList(img);
 }
 
 function syncModalWithImages() {
     if (!imageModal.classList.contains('show')) return;
-    if (sortedImages.length === 0) {
+    if (!modalPreviewState.reconcile(sortedImages)) {
         closeModal();
         return;
     }
 
-    const retainedIndex = sortedImages.findIndex(image => image.path === currentModalImagePath);
-    currentImageIndex = retainedIndex >= 0
-        ? retainedIndex
-        : Math.min(Math.max(currentImageIndex, 0), sortedImages.length - 1);
-    if (sortedImages[currentImageIndex].path !== currentModalImagePath) resetImageTransform();
     updateModalImage();
     updateZoomDisplay();
     updateImageCursor();
@@ -142,7 +136,7 @@ function renderModalTagItem(tag, img) {
 async function toggleModalImageTag(imagePath, tagName, options = {}) {
     const image = images.find(i => i.path === imagePath);
     if (!image) return false;
-    const originalPath = sortedImages[currentImageIndex]?.path;
+    const originalPath = getCurrentModalImage()?.path;
     const currentTags = getImageTags(image);
     const willAdd = !currentTags.includes(tagName);
 
@@ -169,9 +163,8 @@ async function toggleModalImageTag(imagePath, tagName, options = {}) {
 }
 
 async function toggleCurrentImageTag(tagName, options = {}) {
-    if (currentImageIndex < 0 || currentImageIndex >= sortedImages.length) return;
-
-    const img = sortedImages[currentImageIndex];
+    const img = getCurrentModalImage();
+    if (!img) return;
     const originalPath = img.path;
     const willAdd = await toggleModalImageTag(img.path, tagName);
 
@@ -194,11 +187,12 @@ async function toggleHeartTagForCurrentImage(e, options = {}) {
         e.stopPropagation();
     }
 
-    if (currentImageIndex < 0 || currentImageIndex >= sortedImages.length) return;
+    if (!getCurrentModalImage()) return;
 
     await ensureDefaultTags();
 
-    const img = sortedImages[currentImageIndex];
+    const img = getCurrentModalImage();
+    if (!img) return;
     const originalPath = img.path;
     const hasHeart = getImageTags(img).includes(HEART_TAG_NAME);
     const nextTags = hasHeart
@@ -256,41 +250,74 @@ function showTagFeedback(label, isActive) {
 }
 
 function zoomIn() {
-    currentZoom = Math.min(currentZoom * 1.25, maxZoom);
-    updateModalImage();
-    updateZoomDisplay();
-    updateImageCursor();
+    modalPreviewState.zoomBy(1.25);
+    refreshModalTransform();
 }
 
 function zoomOut() {
-    currentZoom = Math.max(currentZoom * 0.8, minZoom);
-    if (currentZoom <= 1) {
-        imageTranslateX = 0;
-        imageTranslateY = 0;
-    }
-    updateModalImage();
-    updateZoomDisplay();
-    updateImageCursor();
+    modalPreviewState.zoomBy(0.8);
+    refreshModalTransform();
 }
 
 function zoomReset() {
-    currentZoom = 1;
-    imageTranslateX = 0;
-    imageTranslateY = 0;
-    updateModalImage();
+    modalPreviewState.resetTransform();
+    refreshModalTransform();
+}
+
+function refreshModalTransform() {
+    updateModalImageTransform();
     updateZoomDisplay();
     updateImageCursor();
 }
 
+function updateModalImageTransform() {
+    const { zoom, translateX, translateY } = modalPreviewState.snapshot();
+    document.getElementById('modalImage').style.transform = `scale(${zoom}) translate(${translateX}px, ${translateY}px)`;
+}
+
 function updateZoomDisplay() {
-    document.getElementById('zoomLevel').textContent = Math.round(currentZoom * 100) + '%';
+    document.getElementById('zoomLevel').textContent = Math.round(modalPreviewState.snapshot().zoom * 100) + '%';
 }
 
 function updateImageCursor() {
     const modalImageEl = document.getElementById('modalImage');
     if (modalImageEl) {
-        modalImageEl.style.cursor = currentZoom > 1 ? 'grab' : 'pointer';
+        modalImageEl.style.cursor = modalPreviewState.snapshot().zoom > 1 ? 'grab' : 'pointer';
     }
+}
+
+function bindModalImageGestures() {
+    const modalImage = document.getElementById('modalImage');
+    if (!modalImage) return;
+
+    let wasDragged = false;
+    modalImage.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        wasDragged = false;
+        if (modalPreviewState.startDrag(event.clientX, event.clientY)) {
+            modalImage.style.cursor = 'grabbing';
+        }
+    });
+    modalImage.addEventListener('mousemove', (event) => {
+        if (modalPreviewState.dragTo(event.clientX, event.clientY)) {
+            wasDragged = true;
+            updateModalImageTransform();
+        }
+    });
+
+    const endDrag = () => {
+        modalPreviewState.endDrag();
+        updateImageCursor();
+    };
+    modalImage.addEventListener('mouseup', endDrag);
+    modalImage.addEventListener('mouseleave', endDrag);
+    modalImage.addEventListener('click', () => {
+        if (wasDragged) {
+            wasDragged = false;
+            return;
+        }
+        if (closeModalOnImageClick) closeModal();
+    });
 }
 
 function handleModalWheel(e) {
@@ -329,57 +356,49 @@ function navigateWithWheel(deltaY) {
 }
 
 function showPrevImage() {
-    if (currentImageIndex > 0) {
-        currentImageIndex--;
-        resetImageTransform();
-        updateModalImage();
-        updateZoomDisplay();
-        updateImageCursor();
-        recordCurrentImageOpen();
-    }
+    navigateModalImage(-1);
 }
 
 function showNextImage() {
-    if (currentImageIndex < sortedImages.length - 1) {
-        currentImageIndex++;
-        resetImageTransform();
-        updateModalImage();
-        updateZoomDisplay();
-        updateImageCursor();
-        recordCurrentImageOpen();
-    }
+    navigateModalImage(1);
+}
+
+function navigateModalImage(offset) {
+    if (!modalPreviewState.move(sortedImages, offset)) return;
+    updateModalImage();
+    updateZoomDisplay();
+    updateImageCursor();
+    recordCurrentImageOpen();
 }
 
 function advanceIfStillViewing(imagePath) {
     if (
         imagePath &&
         imageModal.classList.contains('show') &&
-        sortedImages[currentImageIndex]?.path === imagePath
+        getCurrentModalImage()?.path === imagePath
     ) {
         showNextImage();
     }
 }
 
 function recordCurrentImageOpen() {
-    if (currentImageIndex < 0 || currentImageIndex >= sortedImages.length) return;
-
-    const img = sortedImages[currentImageIndex];
+    const img = getCurrentModalImage();
     if (img && img.path) {
         void addRecentOpenFile(img.path, currentFolder || getParentFolder(img.path));
     }
 }
 
 function showCurrentImageInFolder() {
-    if (currentImageIndex < 0 || currentImageIndex >= sortedImages.length) return;
-    const img = sortedImages[currentImageIndex];
+    const img = getCurrentModalImage();
+    if (!img) return;
     window.electronAPI.showInFolder(img.path);
 }
 
 async function deleteCurrentImage() {
-    if (currentImageIndex < 0 || currentImageIndex >= sortedImages.length) return;
+    const img = getCurrentModalImage();
+    if (!img) return;
     if (isDeletingCurrentImage) return;
     
-    const img = sortedImages[currentImageIndex];
     isDeletingCurrentImage = true;
 
     try {
@@ -396,10 +415,10 @@ async function deleteCurrentImage() {
 }
 
 function handleDeletedImage(result, img) {
-    recordFileOperation([createDeleteHistoryItem(result, img, currentImageIndex)]);
+    recordFileOperation([createDeleteHistoryItem(result, img, modalPreviewState.snapshot().index)]);
 
     imageCollection.remove(img.path);
-    refreshAfterImageRemoval();
+    refreshAfterImageMembershipChange();
 }
 
 function createDeleteHistoryItem(result, img = null, index = -1) {
@@ -419,19 +438,6 @@ function recordFileOperation(items) {
         .map(item => ({ ...item }));
     if (normalizedItems.length > 0) {
         deleteHistory.push({ type: 'batch', items: normalizedItems });
-    }
-}
-
-function refreshAfterImageRemoval() {
-    refreshAfterImageMembershipChange();
-
-    if (images.length === 0) {
-        closeModal();
-    } else {
-        if (currentImageIndex >= sortedImages.length) {
-            currentImageIndex = sortedImages.length - 1;
-        }
-        updateModalImage();
     }
 }
 

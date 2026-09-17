@@ -162,52 +162,6 @@ function bindModalEvents() {
     bindModalImageGestures();
 }
 
-function bindModalImageGestures() {
-    const modalImageEl = document.getElementById('modalImage');
-    if (!modalImageEl) return;
-
-    let modalImageWasDragged = false;
-
-    modalImageEl.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
-        modalImageWasDragged = false;
-
-        if (currentZoom > 1) {
-            isDragging = true;
-            dragStartX = e.clientX - imageTranslateX * currentZoom;
-            dragStartY = e.clientY - imageTranslateY * currentZoom;
-            modalImageEl.style.cursor = 'grabbing';
-        }
-    });
-
-    modalImageEl.addEventListener('mousemove', (e) => {
-        if (isDragging && currentZoom > 1) {
-            modalImageWasDragged = true;
-            imageTranslateX = (e.clientX - dragStartX) / currentZoom;
-            imageTranslateY = (e.clientY - dragStartY) / currentZoom;
-            modalImageEl.style.transform = `scale(${currentZoom}) translate(${imageTranslateX}px, ${imageTranslateY}px)`;
-        }
-    });
-
-    modalImageEl.addEventListener('mouseup', () => {
-        isDragging = false;
-        modalImageEl.style.cursor = currentZoom > 1 ? 'grab' : 'pointer';
-    });
-
-    modalImageEl.addEventListener('mouseleave', () => {
-        isDragging = false;
-        modalImageEl.style.cursor = currentZoom > 1 ? 'grab' : 'pointer';
-    });
-
-    modalImageEl.addEventListener('click', () => {
-        if (modalImageWasDragged) {
-            modalImageWasDragged = false;
-            return;
-        }
-        if (closeModalOnImageClick) closeModal();
-    });
-}
-
 function bindElectronEvents() {
     window.electronAPI.onOpenFolder(async (folderPath) => {
         await loadFolder(folderPath);

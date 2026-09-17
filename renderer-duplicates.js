@@ -182,15 +182,6 @@ async function deleteDuplicateImage(imagePath) {
     imageCollection.remove(imagePath);
     duplicateScanCompleted = true;
     refreshAfterImageMembershipChange();
-
-    if (imageModal.classList.contains('show')) {
-        if (sortedImages.length === 0) {
-            closeModal();
-        } else {
-            currentImageIndex = Math.min(currentImageIndex, sortedImages.length - 1);
-            updateModalImage();
-        }
-    }
 }
 
 async function deleteDuplicateImagesDistinct() {
@@ -223,15 +214,10 @@ async function deleteDuplicateImagesDistinct() {
         deleteAllBtn.textContent = '正在删除...';
     }
 
-    const modalWasOpen = imageModal.classList.contains('show');
-    const modalImagePath = modalWasOpen && currentImageIndex >= 0 && currentImageIndex < sortedImages.length
-        ? sortedImages[currentImageIndex].path
-        : null;
-    const previousImageIndex = currentImageIndex;
     const result = await window.electronAPI.deleteImages(duplicateImages.map(img => img.path));
     if (!result.success) {
         alert('批量删除失败: ' + (result.error || '未知错误'));
-        refreshAfterDuplicateBatchRemoval([], { modalWasOpen, modalImagePath, previousImageIndex });
+        refreshAfterDuplicateBatchRemoval([]);
         return;
     }
 
@@ -247,11 +233,7 @@ async function deleteDuplicateImagesDistinct() {
         -1
     )));
 
-    refreshAfterDuplicateBatchRemoval(deletedPaths, {
-        modalWasOpen,
-        modalImagePath,
-        previousImageIndex
-    });
+    refreshAfterDuplicateBatchRemoval(deletedPaths);
 
     if (failures.length > 0) {
         const failedNames = failures.slice(0, 5).map(item => `- ${item.name}: ${item.error}`).join('\n');
@@ -260,24 +242,11 @@ async function deleteDuplicateImagesDistinct() {
     }
 }
 
-function refreshAfterDuplicateBatchRemoval(deletedPaths, modalState) {
+function refreshAfterDuplicateBatchRemoval(deletedPaths) {
     if (deletedPaths.length > 0) {
         imageCollection.remove(deletedPaths);
     }
 
     duplicateScanCompleted = true;
     refreshAfterImageMembershipChange();
-
-    if (!modalState.modalWasOpen) return;
-
-    if (sortedImages.length === 0) {
-        closeModal();
-        return;
-    }
-
-    const retainedIndex = sortedImages.findIndex(img => img.path === modalState.modalImagePath);
-    currentImageIndex = retainedIndex >= 0
-        ? retainedIndex
-        : Math.min(modalState.previousImageIndex, sortedImages.length - 1);
-    updateModalImage();
 }

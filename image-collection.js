@@ -12,9 +12,13 @@
         const items = [];
         const tagsByHash = Object.create(null);
         const scoresByHash = Object.create(null);
+        let tagCounts = null;
+        let untaggedCount = 0;
 
         function replace(nextImages) {
-            items.splice(0, items.length, ...normalizeImages(nextImages));
+            const replacements = normalizeImages(nextImages);
+            items.length = 0;
+            for (const image of replacements) items.push(image);
             rebuildMetadataIndexes();
             return items;
         }
@@ -24,10 +28,15 @@
             if (pathsToRemove.size === 0) return [];
 
             const removed = [];
-            for (let index = items.length - 1; index >= 0; index--) {
-                if (!pathsToRemove.has(items[index].path)) continue;
-                removed.unshift(...items.splice(index, 1));
+            let writeIndex = 0;
+            for (const image of items) {
+                if (pathsToRemove.has(image.path)) {
+                    removed.push(image);
+                } else {
+                    items[writeIndex++] = image;
+                }
             }
+            items.length = writeIndex;
             rebuildMetadataIndexes();
             return removed;
         }
@@ -41,13 +50,25 @@
             });
             if (additions.length === 0) return [];
 
-            items.unshift(...additions);
+            const previousLength = items.length;
+            items.length += additions.length;
+            for (let index = previousLength - 1; index >= 0; index--) {
+                items[index + additions.length] = items[index];
+            }
+            additions.forEach((image, index) => { items[index] = image; });
             rebuildMetadataIndexes();
             return additions;
         }
 
         function applyMetadata(updates) {
             const imagesByPath = new Map(items.map(image => [image.path, image]));
+            const imagesByHash = new Map();
+            function addToHashGroup(image) {
+                if (!image.hash) return;
+                if (!imagesByHash.has(image.hash)) imagesByHash.set(image.hash, new Set());
+                imagesByHash.get(image.hash).add(image);
+            }
+            items.forEach(addToHashGroup);
             let changedCount = 0;
 
             (Array.isArray(updates) ? updates : [updates]).forEach((update) => {
@@ -56,11 +77,13 @@
                 if (!image) return;
 
                 if (Object.prototype.hasOwnProperty.call(update, 'hash')) {
+                    imagesByHash.get(image.hash)?.delete(image);
                     image.hash = update.hash || null;
+                    addToHashGroup(image);
                 }
                 const matchingImages = image.hash
-                    ? items.filter(candidate => candidate.hash === image.hash)
-                    : [image];
+                    ? imagesByHash.get(image.hash)
+                    : new Set([image]);
                 if (Object.prototype.hasOwnProperty.call(update, 'tags')) {
                     const tags = Array.isArray(update.tags) ? [...update.tags] : [];
                     matchingImages.forEach(candidate => { candidate.tags = tags; });
@@ -69,7 +92,7 @@
                     const score = update.score ?? null;
                     matchingImages.forEach(candidate => { candidate.score = score; });
                 }
-                changedCount += matchingImages.length;
+                changedCount += matchingImages.size;
             });
 
             if (changedCount > 0) rebuildMetadataIndexes();
@@ -135,7 +158,31 @@
             return image.score ?? null;
         }
 
+        function ensureTagCounts() {
+            if (tagCounts) return;
+            tagCounts = new Map();
+            untaggedCount = 0;
+            for (const image of items) {
+                const tags = getTags(image);
+                if (tags.length === 0) untaggedCount++;
+                for (const tag of new Set(tags)) {
+                    tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+                }
+            }
+        }
+
+        function getTagCount(tag) {
+            ensureTagCounts();
+            return tagCounts.get(tag) || 0;
+        }
+
+        function getUntaggedCount() {
+            ensureTagCounts();
+            return untaggedCount;
+        }
+
         function rebuildMetadataIndexes() {
+            tagCounts = null;
             clearObject(tagsByHash);
             clearObject(scoresByHash);
             items.forEach((image) => {
@@ -161,7 +208,9 @@
             removeTag,
             renameTag,
             getTags,
-            getScore
+            getScore,
+            getTagCount,
+            getUntaggedCount
         });
     }
 
