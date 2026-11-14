@@ -464,6 +464,16 @@
     box-shadow: var(--shadow);
 }
 
+.waterfall-card.is-rated::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border: 3px solid var(--accent-color);
+    border-radius: inherit;
+    pointer-events: none;
+}
+
 .waterfall-card-header {
     position: absolute;
     top: 0;

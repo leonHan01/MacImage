@@ -31,6 +31,7 @@ MacImage is a macOS image browsing and organization tool built with Electron. It
   - Review images in a 2-card, 3-card, or 10-card layout; the 2-card layout fits image proportions and keeps the cards adjacent on the left.
   - Right-click an image in any layout to mark it as 1 point.
   - Use a single compact toolbar, with transparent copy and rating buttons over the images and filenames hidden to preserve viewing space.
+  - Highlight rated images with a blue border; clearing the rating removes the highlight.
   - Reuse loaded images when scoring or refreshing the same page to avoid rebuilding them.
   - Assign each image a score from 1 to 3. The five most recent rounds keep their complete images, scores, and layouts so Previous or the Up arrow can restore them. Older rounds and remaining rounds on quit are committed: rated images move to the target folder, and unrated images go directly to the macOS system Trash without a configured trash folder.
   - View the current selection count in the toolbar; hover for pending, collected, and trashed totals and file sizes.

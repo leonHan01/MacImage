@@ -5,8 +5,8 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 const MacImageWaterfallSession = require('../waterfall-session');
 
-function element(innerHTML = '') {
-    const classes = new Set();
+function element(innerHTML = '', classNames = '') {
+    const classes = new Set(classNames.split(/\s+/).filter(Boolean));
     return {
         innerHTML, dataset: {},
         classList: {
@@ -34,9 +34,9 @@ function renderer() {
             nodes = new Map();
             const messages = value.match(/<div class="waterfall-messages">([\s\S]*?)<\/div>/);
             if (messages) nodes.set('.waterfall-messages', element(messages[1]));
-            cards = [...value.matchAll(/<article class="waterfall-card" data-waterfall-path="([^"]+)">([\s\S]*?)<\/article>/g)]
-                .map(([, imagePath, content]) => {
-                    const card = element(content);
+            cards = [...value.matchAll(/<article class="(waterfall-card[^"]*)" data-waterfall-path="([^"]+)">([\s\S]*?)<\/article>/g)]
+                .map(([, classNames, imagePath, content]) => {
+                    const card = element(content, classNames);
                     card.dataset.waterfallPath = imagePath;
                     const image = { src: imagePath };
                     const copy = element();
@@ -108,14 +108,17 @@ test('rating and right-click scoring preserve all loaded images and copy control
     assert.equal(app.cards()[0], card);
     assert.equal(copy.textContent, '✓');
     assert.equal(button['aria-pressed'], 'true');
+    assert.equal(card.classList.contains('is-rated'), true);
     assert.equal(app.context.getWaterfallView().scores.get('/photos/0.jpg'), 3);
     assert.match(app.toolbar.innerHTML, /已选 1\/10/);
 
     app.context.handleWaterfallGridClick(event);
     assert.equal(button['aria-pressed'], 'false');
+    assert.equal(card.classList.contains('is-rated'), false);
     assert.equal(app.context.getWaterfallView().scores.has('/photos/0.jpg'), false);
     app.context.handleWaterfallContextMenu({ target: { closest: () => card } });
     assert.equal(card.querySelectorAll('[data-score]')[0]['aria-pressed'], 'true');
+    assert.equal(card.classList.contains('is-rated'), true);
     assert.equal(app.writes(), 1);
     assert.deepEqual(app.cards(), originalCards);
 });
@@ -134,6 +137,16 @@ test('same-page refreshes retain images while a different order replaces them', 
     assert.equal(app.writes(), 2);
     assert.equal(app.cards()[0].dataset.waterfallPath, '/photos/1.jpg');
     assert.notEqual(app.cards()[0], firstCard);
+
+    const card = app.cards()[0];
+    const button = card.querySelectorAll('[data-score]')[1];
+    app.context.handleWaterfallGridClick({ target: { closest: () => button } });
+    app.context.sortedImages.reverse();
+    app.context.renderWaterfallPage();
+    app.context.sortedImages.reverse();
+    app.context.renderWaterfallPage();
+    assert.equal(app.cards()[0].dataset.waterfallPath, '/photos/1.jpg');
+    assert.equal(app.cards()[0].classList.contains('is-rated'), true);
 });
 
 test('page processing retains the current images until the next page is ready', async () => {

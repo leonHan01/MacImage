@@ -56,6 +56,7 @@ function updateWaterfallPageInPlace(view) {
     cards.forEach((card, index) => {
         const image = view.pageImages[index];
         const selectedScore = view.scores.get(image.path);
+        card.classList.toggle('is-rated', Boolean(selectedScore));
         card.querySelectorAll('[data-score]').forEach(button => {
             const selected = Number(button.dataset.score) === selectedScore;
             button.classList.toggle('selected', selected);
@@ -230,7 +231,7 @@ function resetWaterfallReviewSession(images = [], pendingPages = []) {
 function renderWaterfallCard(image, index, scores = getWaterfallView().scores) {
     const selectedScore = scores.get(image.path);
     return `
-        <article class="waterfall-card" data-waterfall-path="${escapeAttribute(image.path)}">
+        <article class="waterfall-card${selectedScore ? ' is-rated' : ''}" data-waterfall-path="${escapeAttribute(image.path)}">
             <div class="waterfall-card-header">
                 <span class="waterfall-card-number">${index + 1}</span>
                 <div class="waterfall-score-controls" role="group" aria-label="${escapeAttribute(image.name)} 的操作与评分">
