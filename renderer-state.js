@@ -33,7 +33,8 @@ let thumbnailQueuedIndexes = new Set();
 let thumbnailActiveCount = 0;
 let thumbnailMemoryCache = new Map();
 const savedWaterfallPageSize = Number(localStorage.getItem('macimage:waterfallPageSize'));
-const initialWaterfallPageSize = [3, 10].includes(savedWaterfallPageSize) ? savedWaterfallPageSize : 3;
+const WATERFALL_PAGE_SIZES = [2, 3, 10];
+const initialWaterfallPageSize = WATERFALL_PAGE_SIZES.includes(savedWaterfallPageSize) ? savedWaterfallPageSize : 3;
 
 const FAVORITE_IMAGE_SHORTCUT = 'f';
 const DELETE_IMAGE_SHORTCUT = 'd';
@@ -50,7 +51,6 @@ const GRID_PADDING = 14;
 const GRID_OVERSCAN_ROWS = 2;
 const LIST_ROW_HEIGHT = 60;
 const LIST_OVERSCAN_ROWS = 8;
-const WATERFALL_PAGE_SIZES = [3, 10];
 const WATERFALL_WHEEL_PAGE_THRESHOLD = 80;
 const WATERFALL_WHEEL_RESET_MS = 240;
 const HEART_TAG_NAME = '红心';

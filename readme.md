@@ -11,6 +11,7 @@ MacImage is a macOS image browsing and organization tool built with Electron. It
   - Switch between list, thumbnail grid, and large-image waterfall views.
   - Sort by filename, file size, modification time, Elo rating, or random order.
   - Preview images with previous/next navigation, zooming, panning, and Finder location actions.
+  - Copy the current image to the system clipboard from the preview's bottom toolbar.
   - Cache thumbnails locally to reduce repeated thumbnail generation.
 
 - Tags and categories
@@ -27,10 +28,12 @@ MacImage is a macOS image browsing and organization tool built with Electron. It
   - Use number keys `1`–`8` to select an image in the competition window.
 
 - Large-image waterfall review
-  - Review images in a 3-card or 10-card layout.
-  - Right-click an image in either layout to mark it as 1 point.
-  - Assign each image a score from 1 to 3. Rated images move to the target folder when advancing. In both layouts, unrated images are deferred so the five most recent pages can be restored with Previous or the Up arrow; older pages move to trash, and any remaining deferred cleanup is committed when the app quits.
-  - View per-page and cumulative counts and file sizes for collected and deleted images.
+  - Review images in a 2-card, 3-card, or 10-card layout; the 2-card layout fits image proportions and keeps the cards adjacent on the left.
+  - Right-click an image in any layout to mark it as 1 point.
+  - Use a single compact toolbar, with transparent copy and rating buttons over the images and filenames hidden to preserve viewing space.
+  - Reuse loaded images when scoring or refreshing the same page to avoid rebuilding them.
+  - Assign each image a score from 1 to 3. The five most recent rounds keep their complete images, scores, and layouts so Previous or the Up arrow can restore them. Older rounds and remaining rounds on quit are committed: rated images move to the target folder, and unrated images go directly to the macOS system Trash without a configured trash folder.
+  - View the current selection count in the toolbar; hover for pending, collected, and trashed totals and file sizes.
 
 - Duplicate image detection
   - Detect byte-identical images in the current folder.
@@ -41,8 +44,8 @@ MacImage is a macOS image browsing and organization tool built with Electron. It
   - Reveal or move individual matches to trash, or confirm a batch cleanup; undo the latest batch with `Cmd + Z`.
 
 - File organization and trash
-  - Set a trash folder before deleting images. Deletion moves files to the configured folder instead of permanently removing them.
-  - Undo the most recent deletion, duplicate cleanup, or waterfall operation with `Cmd + Z`.
+  - Preview deletion, duplicate cleanup, and small-image cleanup use the configured trash folder. Waterfall review sends unrated images directly to the system Trash.
+  - Undo the most recent deletion, duplicate cleanup, or image migration with `Cmd + Z`. Images sent to the system Trash by waterfall review must be restored in Finder.
   - Move all images in the current folder, or only tagged images, to a selected target folder.
   - Append a number to conflicting filenames instead of overwriting existing files.
   - View trash usage and permanently empty the trash from Settings.
@@ -119,7 +122,7 @@ Build artifacts are written to `dist/`. The current packaging configuration targ
 | Global | `Cmd + Z` | Undo the most recent file operation |
 | Image competition | `1`–`8` | Choose the corresponding image |
 | Waterfall review | `↓` / `Space` | Advance and organize the current page |
-| Waterfall review | `↑` | Restore the previous pending-cleanup page |
+| Waterfall review | `↑` | Return to the previous round, retaining the latest five rounds |
 | Competition / preview | `Esc` | Close the current window |
 
 After assigning a single-letter shortcut to a custom tag, press that letter during image preview to toggle the tag and advance to the next image. `F` and `D` are reserved by built-in actions and cannot be assigned to tags.
@@ -145,7 +148,7 @@ Application data and thumbnail caches are stored under Electron’s `userData` d
 
 Image identity uses SHA-256 over the complete file. Legacy fingerprints based on the first 64KB are upgraded as images are read, preserving existing tags and ratings. The first upgrade rereads files to calculate their identities. Metadata previously merged by a legacy fingerprint cannot be attributed retroactively, so it is preserved on the corresponding images; subsequent edits are independent. Legacy rating backups remain importable.
 
-The main process retains pending waterfall pages. Returning to a folder after navigation, undo, or reopening the window restores its available previous pages.
+The five most recent waterfall rounds keep their original files while the main process retains their scores and layouts across folder navigation and renderer reloads. Quitting waits for active rounds and commits the remaining operations. Images already sent to the system Trash can be restored with Put Back in Finder.
 
 On macOS, this directory is typically:
 

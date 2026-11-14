@@ -12,8 +12,10 @@ function registerTestHandlers(store, overrides = {}) {
         ipcMain,
         dialog: overrides.dialog || {},
         shell: {},
+        nativeImage: overrides.nativeImage || {},
+        clipboard: overrides.clipboard || {},
         path,
-        fsp: fs.promises,
+        fsp: overrides.fsp || fs.promises,
         getMainWindow: () => null,
         store,
         imageLibrary: {
@@ -46,6 +48,61 @@ function registerTestHandlers(store, overrides = {}) {
     });
     return handlers;
 }
+
+test('copy-image reads the requested original and writes image content to the clipboard', async () => {
+    const source = Buffer.from('original image bytes');
+    const image = { isEmpty: () => false };
+    const copied = [];
+    const handlers = registerTestHandlers({}, {
+        fsp: { readFile: async imagePath => {
+            assert.equal(imagePath, '/photos/current@2x.png');
+            return source;
+        } },
+        nativeImage: { createFromBuffer: buffer => {
+            assert.equal(buffer, source);
+            return image;
+        } },
+        clipboard: { writeImage: value => copied.push(value) }
+    });
+
+    assert.deepEqual(await handlers['copy-image']({}, '/photos/current@2x.png'), { success: true });
+    assert.deepEqual(copied, [image]);
+});
+
+test('invalid paths and undecodable images leave the existing clipboard untouched', async () => {
+    let reads = 0;
+    let writes = 0;
+    const handlers = registerTestHandlers({}, {
+        fsp: { readFile: async () => { reads++; return Buffer.from('invalid'); } },
+        nativeImage: { createFromBuffer: () => ({ isEmpty: () => true }) },
+        clipboard: { writeImage: () => { writes++; } }
+    });
+
+    for (const imagePath of [undefined, null, {}, '', 'relative.png']) {
+        assert.equal((await handlers['copy-image']({}, imagePath)).success, false);
+    }
+    assert.equal(reads, 0);
+    const result = await handlers['copy-image']({}, '/photos/broken.png');
+    assert.equal(result.success, false);
+    assert.match(result.error, /图片/);
+    assert.equal(writes, 0);
+});
+
+test('copy-image reports file, decoding and clipboard errors', async () => {
+    for (const failure of ['read', 'decode', 'write']) {
+        const fail = () => { throw new Error(`${failure} failed`); };
+        const handlers = registerTestHandlers({}, {
+            fsp: { readFile: failure === 'read' ? fail : async () => Buffer.from('image') },
+            nativeImage: {
+                createFromBuffer: failure === 'decode' ? fail : () => ({ isEmpty: () => false })
+            },
+            clipboard: { writeImage: failure === 'write' ? fail : () => {} }
+        });
+        assert.deepEqual(await handlers['copy-image']({}, '/photos/current.png'), {
+            success: false, error: `${failure} failed`
+        });
+    }
+});
 
 test('directory IPC delegates scanning and forwards metadata batches', async () => {
     const sent = [];

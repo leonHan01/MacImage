@@ -25,14 +25,14 @@ async function mapWithConcurrency(items, concurrency, mapper) {
     return results;
 }
 
-function registerTestHandlers(trashFolder, overrides = {}) {
+function registerTestHandlers(overrides = {}) {
     const handlers = {};
     const ipcMain = { handle: (name, handler) => { handlers[name] = handler; } };
     const imageFileOperations = createTestImageFileOperations(overrides);
     const services = registerFileOperationHandlers({
         ipcMain,
         path,
-        store: { get: key => key === 'trashFolder' ? trashFolder : null },
+        store: { get: () => { throw new Error('Waterfall must not read a fixed trash folder'); } },
         imageFileOperations
     });
     return { handlers, services };
@@ -48,6 +48,7 @@ function createTestImageFileOperations(overrides = {}) {
             moveFileSafely: overrides.moveFileSafely || utils.moveFileSafely
         },
         mapWithConcurrency,
+        trashItem: overrides.trashItem,
         moveHashMappings: () => {},
         listImageEntries: async () => []
     });
@@ -94,162 +95,123 @@ test('migration reserves distinct targets for colliding names running concurrent
     }
 });
 
-test('three-grid waterfall keeps five pending pages before committing the oldest cleanup', async () => {
+test('waterfall immediately uses system trash without reading a configured folder', async (t) => {
     const tempDir = await mkdtemp(TEMP_ROOT);
-    try {
-        const sourceDir = path.join(tempDir, 'source');
-        const trashDir = path.join(tempDir, 'trash');
-        await fs.promises.mkdir(sourceDir);
-        await fs.promises.mkdir(trashDir);
-        const imagePaths = [];
-        for (let index = 0; index < 6; index++) {
-            const imagePath = path.join(sourceDir, `photo-${index}.jpg`);
-            imagePaths.push(imagePath);
-            await writeFile(imagePath, `photo-${index}`);
+    t.after(() => rm(tempDir, { recursive: true, force: true }));
+    const sourceDir = path.join(tempDir, 'source');
+    const targetDir = path.join(tempDir, 'target');
+    const nativeTrashDir = path.join(tempDir, 'native-trash-fixture');
+    await Promise.all([sourceDir, nativeTrashDir].map(dir => fs.promises.mkdir(dir)));
+    const ratedPath = path.join(sourceDir, 'rated.jpg');
+    const unratedPath = path.join(sourceDir, 'unrated.jpg');
+    await Promise.all([ratedPath, unratedPath].map(file => writeFile(file, 'image')));
+    const trashedPaths = [];
+    const { handlers, services } = registerTestHandlers({
+        trashItem: async file => {
+            trashedPaths.push(file);
+            await fs.promises.rename(file, path.join(nativeTrashDir, path.basename(file)));
         }
+    });
 
-        const { handlers } = registerTestHandlers(trashDir);
-        const pendingBatchIds = [];
-        for (let index = 0; index < 5; index++) {
-            const result = await handlers['process-waterfall-page']({}, {
-                ratedImages: [],
-                unratedPaths: [imagePaths[index]],
-                targetFolder: '',
-                deferUnrated: true
-            });
-            pendingBatchIds.push(result.pendingBatchId);
-            assert.equal(result.success, true);
-            assert.equal(result.deleted.length, 0);
-        }
+    const result = await handlers['process-waterfall-page']({}, {
+        ratedImages: [{ path: ratedPath, score: 2 }],
+        unratedPaths: [ratedPath, unratedPath, unratedPath],
+        targetFolder: targetDir,
+        deferUnrated: true
+    });
 
-        assert.equal((await readdir(sourceDir)).length, 6);
-        assert.equal((await readdir(trashDir)).length, 0);
-
-        const sixthResult = await handlers['process-waterfall-page']({}, {
-            ratedImages: [],
-            unratedPaths: [imagePaths[5]],
-            targetFolder: '',
-            deferUnrated: true
-        });
-
-        assert.equal(sixthResult.success, true);
-        assert.equal(sixthResult.deleted.length, 1);
-        assert.deepEqual(sixthResult.releasedBatchIds, [pendingBatchIds[0]]);
-        assert.equal((await readdir(sourceDir)).length, 5);
-        assert.equal((await readdir(trashDir)).length, 1);
-    } finally {
-        await rm(tempDir, { recursive: true, force: true });
-    }
+    assert.equal(result.success, true);
+    assert.equal(result.moved[0].score, 2);
+    assert.deepEqual(trashedPaths, [unratedPath]);
+    assert.equal(result.deleted[0].systemTrash, true);
+    assert.equal(result.deleted[0].trashPath, undefined);
+    assert.equal(result.pending, undefined);
+    assert.equal(result.failures.length, 0);
+    assert.deepEqual(await readdir(sourceDir), []);
+    assert.deepEqual(await readdir(targetDir), ['rated.jpg']);
+    assert.deepEqual(await readdir(nativeTrashDir), ['unrated.jpg']);
+    assert.deepEqual(await handlers['get-waterfall-pending-pages'](), []);
+    await services.waitForWaterfallOperations();
+    assert.deepEqual(trashedPaths, [unratedPath]);
 });
 
-test('restoring a pending waterfall page keeps its files out of cleanup', async () => {
+test('failed native trash keeps the source file and returns its exact error without a folder fallback', async (t) => {
     const tempDir = await mkdtemp(TEMP_ROOT);
-    try {
-        const sourceDir = path.join(tempDir, 'source');
-        const trashDir = path.join(tempDir, 'trash');
-        await fs.promises.mkdir(sourceDir);
-        await fs.promises.mkdir(trashDir);
-        const imagePath = path.join(sourceDir, 'restore-me.jpg');
-        await writeFile(imagePath, 'restore-me');
-
-        const { handlers, services } = registerTestHandlers(trashDir);
-        const stageResult = await handlers['process-waterfall-page']({}, {
-            ratedImages: [],
-            unratedPaths: [imagePath],
-            targetFolder: '',
-            deferUnrated: true
-        });
-        assert.deepEqual(await handlers['get-waterfall-pending-paths'](), [imagePath]);
-        const restoreResult = await handlers['restore-waterfall-pending-page']({}, stageResult.pendingBatchId);
-        assert.deepEqual(await handlers['get-waterfall-pending-paths'](), []);
-        const flushResult = await services.flushPendingWaterfallCleanup();
-
-        assert.equal(restoreResult.success, true);
-        assert.deepEqual(restoreResult.paths, [imagePath]);
-        assert.equal(flushResult.deleted.length, 0);
-        assert.equal((await readdir(sourceDir)).length, 1);
-        assert.equal((await readdir(trashDir)).length, 0);
-    } finally {
-        await rm(tempDir, { recursive: true, force: true });
-    }
-});
-
-test('flushing pending waterfall cleanup moves all remaining files to trash', async () => {
-    const tempDir = await mkdtemp(TEMP_ROOT);
-    try {
-        const sourceDir = path.join(tempDir, 'source');
-        const trashDir = path.join(tempDir, 'trash');
-        await fs.promises.mkdir(sourceDir);
-        await fs.promises.mkdir(trashDir);
-        const imagePaths = [
-            path.join(sourceDir, 'one.jpg'),
-            path.join(sourceDir, 'two.jpg')
-        ];
-        await Promise.all(imagePaths.map((imagePath, index) => writeFile(imagePath, `image-${index}`)));
-
-        const { handlers, services } = registerTestHandlers(trashDir);
-        for (const imagePath of imagePaths) {
-            await handlers['process-waterfall-page']({}, {
-                ratedImages: [],
-                unratedPaths: [imagePath],
-                targetFolder: '',
-                deferUnrated: true
-            });
+    t.after(() => rm(tempDir, { recursive: true, force: true }));
+    const imagePath = path.join(tempDir, 'blocked.jpg');
+    await writeFile(imagePath, 'keep');
+    const { handlers } = registerTestHandlers({
+        trashItem: async () => {
+            throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES', syscall: 'trash' });
         }
+    });
 
-        const flushResult = await services.flushPendingWaterfallCleanup();
+    const result = await handlers['process-waterfall-page']({}, { unratedPaths: [imagePath] });
 
-        assert.equal(flushResult.deleted.length, 2);
-        assert.equal(flushResult.failures.length, 0);
-        assert.equal((await readdir(sourceDir)).length, 0);
-        assert.equal((await readdir(trashDir)).length, 2);
-    } finally {
-        await rm(tempDir, { recursive: true, force: true });
-    }
+    assert.equal(result.success, true);
+    assert.equal(result.deleted.length, 0);
+    assert.equal(result.failures[0].path, imagePath);
+    assert.match(result.failures[0].error, /EACCES/);
+    assert.equal(result.failures[0].code, 'EACCES');
+    assert.equal(result.failures[0].syscall, 'trash');
+    assert.equal(await fs.promises.readFile(imagePath, 'utf8'), 'keep');
+    assert.deepEqual(await readdir(tempDir), ['blocked.jpg']);
 });
 
-test('quit cleanup waits for an active waterfall page before flushing its pending images', async () => {
+test('missing rated files retain their system error code and source and destination paths', async (t) => {
     const tempDir = await mkdtemp(TEMP_ROOT);
-    try {
-        const sourceDir = path.join(tempDir, 'source');
-        const targetDir = path.join(tempDir, 'target');
-        const trashDir = path.join(tempDir, 'trash');
-        await Promise.all([sourceDir, targetDir, trashDir].map(dirPath => fs.promises.mkdir(dirPath)));
-        const ratedPath = path.join(sourceDir, 'rated.jpg');
-        const pendingPath = path.join(sourceDir, 'pending.jpg');
-        await writeFile(ratedPath, 'rated');
-        await writeFile(pendingPath, 'pending');
+    t.after(() => rm(tempDir, { recursive: true, force: true }));
+    const sourcePath = path.join(tempDir, 'missing.jpg');
+    const targetFolder = path.join(tempDir, 'target');
+    const { handlers } = registerTestHandlers();
+    const result = await handlers['process-waterfall-page']({}, {
+        ratedImages: [{ path: sourcePath, score: 1 }], targetFolder
+    });
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].code, 'ENOENT');
+    assert.equal(result.failures[0].path, sourcePath);
+    assert.equal(result.failures[0].targetPath, path.join(targetFolder, 'missing.jpg'));
+    assert.equal(result.failures[0].syscall, 'access');
+});
 
-        const utils = createFileOperationUtils({ fsp: fs.promises, path });
-        let releaseFirstMove;
-        const firstMoveGate = new Promise(resolve => { releaseFirstMove = resolve; });
-        let shouldWait = true;
-        const { handlers, services } = registerTestHandlers(trashDir, {
-            moveFileSafely: async (sourcePath, targetPath) => {
-                if (shouldWait) {
-                    shouldWait = false;
-                    await firstMoveGate;
-                }
-                return utils.moveFileSafely(sourcePath, targetPath);
-            }
-        });
+test('folder creation errors include each affected file and the target folder', async (t) => {
+    const tempDir = await mkdtemp(TEMP_ROOT);
+    t.after(() => rm(tempDir, { recursive: true, force: true }));
+    t.mock.method(console, 'error', () => {});
+    const blockedParent = path.join(tempDir, 'file-instead-of-directory');
+    await writeFile(blockedParent, 'file');
+    const targetFolder = path.join(blockedParent, 'target');
+    const { handlers } = registerTestHandlers();
+    const result = await handlers['process-waterfall-page']({}, {
+        ratedImages: [{ path: '/photos/a.jpg', score: 1 }, { path: '/photos/b.jpg', score: 2 }],
+        targetFolder
+    });
+    assert.equal(result.success, false);
+    assert.deepEqual(result.failures.map(item => item.path), ['/photos/a.jpg', '/photos/b.jpg']);
+    assert.equal(result.failures[0].targetPath, targetFolder);
+    assert.equal(result.failures[0].code, 'ENOTDIR');
+    assert.equal(result.failures[0].syscall, 'mkdir');
+});
 
-        const pagePromise = handlers['process-waterfall-page']({}, {
-            ratedImages: [{ path: ratedPath, score: 1 }],
-            unratedPaths: [pendingPath],
-            targetFolder: targetDir,
-            deferUnrated: true
-        });
-        const flushPromise = services.flushPendingWaterfallCleanup();
-        releaseFirstMove();
-        const [pageResult, flushResult] = await Promise.all([pagePromise, flushPromise]);
-
-        assert.equal(pageResult.success, true);
-        assert.equal(flushResult.deleted.length, 1);
-        assert.equal((await readdir(sourceDir)).length, 0);
-        assert.equal((await readdir(targetDir)).length, 1);
-        assert.equal((await readdir(trashDir)).length, 1);
-    } finally {
-        await rm(tempDir, { recursive: true, force: true });
-    }
+test('quit waits for the active native trash operation and rejects new pages', async () => {
+    let finishTrash;
+    const gate = new Promise(resolve => { finishTrash = resolve; });
+    const calls = [];
+    const { handlers, services } = registerTestHandlers({
+        trashItem: async file => { calls.push(file); await gate; }
+    });
+    const processing = handlers['process-waterfall-page']({}, { unratedPaths: ['/photos/current.jpg'] });
+    let quitReady = false;
+    const quitting = services.waitForWaterfallOperations().then(() => { quitReady = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(quitReady, false);
+    assert.deepEqual(calls, ['/photos/current.jpg']);
+    const rejected = await handlers['process-waterfall-page']({}, { unratedPaths: ['/photos/later.jpg'] });
+    assert.equal(rejected.success, false);
+    finishTrash();
+    const result = await processing;
+    await quitting;
+    assert.equal(quitReady, true);
+    assert.equal(result.deleted.length, 1);
+    assert.deepEqual(calls, ['/photos/current.jpg']);
 });

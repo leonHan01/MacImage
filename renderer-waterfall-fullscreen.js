@@ -11,7 +11,7 @@ function renderWaterfallFullscreenButton() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"></path>
             </svg>
-            <span>${isWaterfallFullscreen ? '退出全屏' : '全屏评分'}</span>
+            <span>${isWaterfallFullscreen ? '退出全屏' : '全屏'}</span>
         </button>
     `;
 }
@@ -24,7 +24,7 @@ function syncWaterfallFullscreen() {
     document.querySelectorAll('[data-waterfall-action="fullscreen"]').forEach(button => {
         button.setAttribute('aria-pressed', String(isWaterfallFullscreen));
         button.title = isWaterfallFullscreen ? '退出全屏（Esc / F）' : '沉浸式全屏评分（F）';
-        button.querySelector('span').textContent = isWaterfallFullscreen ? '退出全屏' : '全屏评分';
+        button.querySelector('span').textContent = isWaterfallFullscreen ? '退出全屏' : '全屏';
         button.disabled = waterfallFullscreenTransition;
     });
 }

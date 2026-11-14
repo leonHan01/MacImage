@@ -115,8 +115,7 @@
                         </button>
                     </div>
                     <div class="sort-options">
-                        <label>排序：</label>
-                        <select id="sortSelect" class="sort-select">
+                        <select id="sortSelect" class="sort-select" aria-label="排序" title="图片排序">
                             <option value="name-asc">文件名 A-Z</option>
                             <option value="name-desc">文件名 Z-A</option>
                             <option value="size-asc">大小 从小到大</option>
@@ -128,13 +127,14 @@
                             <option value="random">随机排序</option>
                         </select>
                     </div>
+                    <div id="waterfallToolbar" class="waterfall-toolbar" aria-label="图片评分操作" hidden></div>
                     <div class="competition-launcher">
-                        <label for="competitionCountInput">轮数：</label>
+                        <label for="competitionCountInput">竞赛</label>
                         <input type="number" id="competitionCountInput" min="1" value="3" class="competition-count-input" title="竞赛轮数，3 轮会抽取 8 张图片">
                         <button id="startCompetitionBtn" class="competition-start-btn" title="按轮数从当前文件夹优先选择参赛场数少的图片">开始</button>
                     </div>
                     <div class="server-image-loader">
-                        <label for="serverImageCountInput">服务端图片：</label>
+                        <label for="serverImageCountInput">下载</label>
                         <input type="number" id="serverImageCountInput" min="1" max="9999" value="10" class="server-image-count-input" title="每次下载的图片数量">
                         <button id="loadServerImagesBtn" class="server-image-load-btn">加载</button>
                         <progress id="serverImageDownloadProgress" class="server-image-download-progress" value="0" max="1" hidden></progress>
@@ -182,7 +182,15 @@
                             <polyline points="9 18 15 12 9 6"></polyline>
                         </svg>
                     </button>
+                    <div id="modalCopyStatus" class="modal-copy-status" role="status" aria-live="polite" hidden></div>
                     <div class="modal-zoom-controls">
+                        <button class="zoom-btn modal-copy-btn" id="copyImageBtn" type="button" title="复制当前图片到剪贴板">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <rect x="9" y="9" width="12" height="12" rx="2"></rect>
+                                <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"></path>
+                            </svg>
+                            <span>复制当前图片</span>
+                        </button>
                         <button class="zoom-btn" id="zoomOutBtn" title="缩小">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="11" cy="11" r="8"></circle>

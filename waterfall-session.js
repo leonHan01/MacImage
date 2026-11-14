@@ -11,7 +11,7 @@
     function create(options = {}) {
         const allowedPageSizes = Array.isArray(options.allowedPageSizes) && options.allowedPageSizes.length > 0
             ? [...options.allowedPageSizes]
-            : [3, 10];
+            : [2, 3, 10];
         const processPage = options.processPage || (async () => ({ success: false, error: '评分整理不可用' }));
         const restorePendingPage = options.restorePendingPage || (async () => ({ success: false, error: '恢复上一页不可用' }));
         const wheelThreshold = Number(options.wheelThreshold) || 80;
@@ -27,18 +27,18 @@
         let deletedCount = 0;
         let deletedSize = 0;
         let status = '';
+        let failureDetails = [];
         let isProcessing = false;
-        let pendingPages = [];
-        let restoredPagePaths = null;
         let wheelDelta = 0;
         let lastWheelTime = 0;
+        let pendingPages = [];
+        let restoredPagePaths = null;
 
         function snapshot(images = [], config = {}) {
             const imageList = Array.isArray(images) ? images : [];
             const pageImages = getPageImages(imageList);
             return {
                 pageImages,
-                pendingImages: pendingPages.flatMap(page => page.images),
                 scores: new Map(scores),
                 pageSize,
                 batchNumber,
@@ -48,8 +48,11 @@
                 deletedCount,
                 deletedSize,
                 status,
-                isProcessing,
+                failureDetails: failureDetails.map(item => ({ ...item })),
+                pendingImages: pendingPages.flatMap(page => page.images),
+                restorablePageCount: pendingPages.length,
                 canRestore: pendingPages.length > 0,
+                isProcessing,
                 configurationMessage: getConfigurationMessage(pageImages, config)
             };
         }
@@ -61,13 +64,16 @@
             deletedCount = 0;
             deletedSize = 0;
             status = '';
+            failureDetails = [];
             isProcessing = false;
             const imagesByPath = new Map(images.map(image => [image.path, image]));
             pendingPages = savedPages.map(page => ({
                 id: page.id,
-                images: page.paths.map(imagePath => imagesByPath.get(imagePath)).filter(Boolean)
+                images: page.paths.map(imagePath => imagesByPath.get(imagePath)).filter(Boolean),
+                ratedImages: (page.ratedImages || []).map(item => ({ ...item })),
+                pageSize: allowedPageSizes.includes(page.pageSize) ? page.pageSize : pageSize
             })).filter(page => page.images.length > 0);
-            processedCount = pendingPages.reduce((total, page) => total + page.images.length, 0);
+            processedCount = pendingPages.reduce((count, page) => count + page.images.length, 0);
             batchNumber = pendingPages.length + 1;
             restoredPagePaths = null;
             wheelDelta = 0;
@@ -76,13 +82,14 @@
 
         function clearStatus() {
             status = '';
+            failureDetails = [];
         }
 
         function setPageSize(value) {
             const nextPageSize = Number(value);
-            if (!allowedPageSizes.includes(nextPageSize) || nextPageSize === pageSize) return false;
+            if (isProcessing || !allowedPageSizes.includes(nextPageSize) || nextPageSize === pageSize) return false;
             pageSize = nextPageSize;
-            status = '';
+            clearStatus();
             return true;
         }
 
@@ -97,7 +104,7 @@
             } else {
                 scores.set(imagePath, nextScore);
             }
-            status = '';
+            clearStatus();
             return true;
         }
 
@@ -120,6 +127,7 @@
             if (isProcessing) return emptyOutcome(false);
             const pageImages = getPageImages(Array.isArray(images) ? images : []);
             if (pageImages.length === 0) return emptyOutcome(false);
+            clearStatus();
 
             const configurationMessage = getConfigurationMessage(pageImages, config);
             if (configurationMessage) {
@@ -136,52 +144,62 @@
             isProcessing = true;
 
             try {
-                const result = await processPage({
+                let result = await processPage({
                     ratedImages,
                     unratedPaths,
                     targetFolder: config.targetFolder || '',
-                    deferUnrated: true
+                    retainPage: true,
+                    imagePaths: pageImages.map(image => image.path),
+                    pageSize
                 });
-                if (!result?.success) {
-                    status = `整理失败：${result?.error || '未知错误'}`;
-                    return emptyOutcome(false);
+                if (!result?.success && !result?.failures?.length) {
+                    result = {
+                        ...result,
+                        failures: [{
+                            action: 'process', path: config.currentFolder || '',
+                            targetPath: config.targetFolder || '',
+                            error: result?.error || '未知错误', code: result?.code || ''
+                        }]
+                    };
                 }
                 return applyProcessResult(result, pageImages);
             } catch (error) {
                 status = `整理失败：${error.message || error}`;
+                failureDetails = [{
+                    action: 'process', path: config.currentFolder || '',
+                    targetPath: config.targetFolder || '',
+                    error: error.message || String(error), code: error.code || '', syscall: error.syscall || ''
+                }];
                 return emptyOutcome(false);
             } finally {
                 isProcessing = false;
             }
         }
 
-        async function restore(images) {
-            if (isProcessing || pendingPages.length === 0) {
-                return { success: false, restoredImages: [] };
-            }
-
-            const pendingPage = pendingPages[pendingPages.length - 1];
+        async function restore(images = []) {
+            if (isProcessing || pendingPages.length === 0) return { success: false, restoredImages: [] };
+            const page = pendingPages[pendingPages.length - 1];
             isProcessing = true;
+            clearStatus();
             try {
-                const result = await restorePendingPage(pendingPage.id);
-                if (!result?.success) {
-                    status = `返回上一页失败：${result?.error || '未知错误'}`;
-                    return { success: false, restoredImages: [] };
-                }
-
-                const restoredPaths = new Set(Array.isArray(result.paths) ? result.paths : []);
-                const existingPaths = new Set((Array.isArray(images) ? images : []).map(image => image.path));
-                const restoredImages = pendingPage.images.filter(image => (
-                    restoredPaths.has(image.path) && !existingPaths.has(image.path)
-                ));
+                const result = await restorePendingPage(page.id);
+                if (!result?.success) throw new Error(result?.error || '未知错误');
+                const restoredPaths = new Set(result.paths || []);
+                const existingPaths = new Set(images.map(image => image.path));
+                const restoredImages = page.images.filter(image => restoredPaths.has(image.path) && !existingPaths.has(image.path));
                 pendingPages.pop();
-                restoredPagePaths = restoredImages.map(image => image.path);
+                for (const item of result.ratedImages || page.ratedImages) {
+                    if (restoredPaths.has(item.path)) scores.set(item.path, item.score);
+                }
+                if (allowedPageSizes.includes(page.pageSize)) pageSize = page.pageSize;
+                restoredPagePaths = restoredImages.length > 0 ? restoredImages.map(image => image.path) : null;
                 processedCount = Math.max(0, processedCount - restoredImages.length);
                 batchNumber = Math.max(1, batchNumber - 1);
-                status = `已捞回 ${restoredImages.length} 张待清理图片。`;
+                status = `已返回上一轮 ${restoredImages.length} 张图片，还可返回 ${pendingPages.length} 轮。`;
                 return { success: true, restoredImages };
             } catch (error) {
-                status = `返回上一页失败：${error.message || error}`;
+                status = '返回上一页失败，详细原因如下。';
+                failureDetails = [{ action: 'restore', error: error.message || String(error), code: error.code || '' }];
                 return { success: false, restoredImages: [] };
             } finally {
                 isProcessing = false;
@@ -192,24 +210,24 @@
             const moved = Array.isArray(result.moved) ? result.moved : [];
             const deleted = Array.isArray(result.deleted) ? result.deleted : [];
             const pending = Array.isArray(result.pending) ? result.pending : [];
-            const releasedBatchIds = new Set(Array.isArray(result.releasedBatchIds) ? result.releasedBatchIds : []);
-            const releasedPages = pendingPages.filter(page => releasedBatchIds.has(page.id));
             const pageImagesByPath = new Map([
-                ...releasedPages.flatMap(page => page.images),
-                ...pageImages
+                ...pendingPages.flatMap(page => page.images), ...pageImages
             ].map(image => [image.path, image]));
-            pendingPages = pendingPages.filter(page => !releasedBatchIds.has(page.id));
-            const deletedPaths = new Set(deleted.map(item => item.originalPath));
-            pendingPages = pendingPages.map(page => ({
+            const committedPaths = new Set([...moved, ...deleted].map(item => item.originalPath));
+            const releasedIds = new Set(result.releasedBatchIds || []);
+            pendingPages = pendingPages.filter(page => !releasedIds.has(page.id)).map(page => ({
                 ...page,
-                images: page.images.filter(image => !deletedPaths.has(image.path))
+                images: page.images.filter(image => !committedPaths.has(image.path)),
+                ratedImages: page.ratedImages.filter(item => !committedPaths.has(item.path))
             })).filter(page => page.images.length > 0);
-
             if (result.pendingBatchId && pending.length > 0) {
                 const pendingPaths = new Set(pending.map(item => item.originalPath));
                 pendingPages.push({
                     id: result.pendingBatchId,
-                    images: pageImages.filter(image => pendingPaths.has(image.path))
+                    images: pageImages.filter(image => pendingPaths.has(image.path)),
+                    ratedImages: pageImages.filter(image => pendingPaths.has(image.path) && scores.has(image.path))
+                        .map(image => ({ path: image.path, score: scores.get(image.path) })),
+                    pageSize
                 });
             }
 
@@ -221,7 +239,7 @@
             const currentPagePaths = new Set(pageImages.map(image => image.path));
             const currentProcessedCount = [...processedPaths]
                 .filter(imagePath => currentPagePaths.has(imagePath)).length;
-            if (Array.isArray(restoredPagePaths)) {
+            if (restoredPagePaths) {
                 const remaining = restoredPagePaths.filter(imagePath => !processedPaths.has(imagePath));
                 restoredPagePaths = remaining.length > 0 ? remaining : null;
             }
@@ -233,9 +251,8 @@
                     targetPath: item.targetPath
                 })),
                 ...deleted.map(item => ({
-                    kind: 'delete',
+                    kind: 'system-trash',
                     originalPath: item.originalPath,
-                    trashPath: item.trashPath,
                     fileName: item.fileName,
                     index: -1,
                     hash: pageImagesByPath.get(item.originalPath)?.hash || null
@@ -252,20 +269,20 @@
                 if (currentProcessedCount > 0) batchNumber++;
             }
 
-            const failures = Array.isArray(result.failures) ? result.failures : [];
-            status = failures.length > 0
-                ? `${failures.length} 张图片处理失败，请重试。`
+            failureDetails = Array.isArray(result.failures) ? result.failures.map(item => ({ ...item })) : [];
+            status = failureDetails.length > 0
+                ? `${failureDetails.length} 项操作失败，详细原因如下。`
                 : '';
             return {
-                success: true,
+                success: result.success === true,
                 processedPaths: [...processedPaths],
                 operations,
-                failureCount: failures.length
+                failureCount: failureDetails.length
             };
         }
 
         function getPageImages(images) {
-            if (Array.isArray(restoredPagePaths) && restoredPagePaths.length > 0) {
+            if (restoredPagePaths) {
                 const imagesByPath = new Map(images.map(image => [image.path, image]));
                 return restoredPagePaths.map(imagePath => imagesByPath.get(imagePath)).filter(Boolean);
             }
@@ -274,10 +291,8 @@
 
         function getConfigurationMessage(pageImages, config) {
             const hasRatedImages = pageImages.some(image => scores.has(image.path));
-            const hasUnratedImages = pageImages.some(image => !scores.has(image.path));
             if (hasRatedImages && !config.targetFolder) return '请先选择用于汇集已评分图片的目标文件夹。';
             if (hasRatedImages && config.currentFolder === config.targetFolder) return '目标文件夹不能与当前评分文件夹相同。';
-            if (hasUnratedImages && !config.trashFolder) return '请先设置回收站，未评分图片会在翻页时进入待清理队列。';
             return '';
         }
 

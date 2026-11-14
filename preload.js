@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setTrashFolder: (folderPath) => ipcRenderer.invoke('set-trash-folder', folderPath),
     directoryExists: (folderPath) => ipcRenderer.invoke('directory-exists', folderPath),
     fileExists: (filePath) => ipcRenderer.invoke('file-exists', filePath),
+    copyImage: (imagePath) => ipcRenderer.invoke('copy-image', imagePath),
     deleteImage: (imagePath) => ipcRenderer.invoke('delete-image', imagePath),
     deleteImages: (imagePaths) => ipcRenderer.invoke('delete-images', imagePaths),
     undoDeleteImage: (trashPath, originalPath) => ipcRenderer.invoke('undo-delete', trashPath, originalPath),
@@ -60,7 +61,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     moveTaggedImageToTarget: (imagePath, targetFolder) => ipcRenderer.invoke('move-tagged-image-to-target', imagePath, targetFolder),
     processWaterfallPage: (page) => ipcRenderer.invoke('process-waterfall-page', page),
     restoreWaterfallPendingPage: (pageId) => ipcRenderer.invoke('restore-waterfall-pending-page', pageId),
-    getWaterfallPendingPaths: () => ipcRenderer.invoke('get-waterfall-pending-paths'),
     getWaterfallPendingPages: () => ipcRenderer.invoke('get-waterfall-pending-pages'),
     onTrashFolderChanged: (callback) => ipcRenderer.on('trash-folder-changed', (event, path) => callback(path)),
     onUndoDelete: (callback) => ipcRenderer.on('undo-delete', () => callback())

@@ -1,6 +1,9 @@
 let virtualGalleryDom = null;
 
 function renderImages() {
+    if (currentViewMode !== 'waterfall' && typeof disconnectWaterfallTwoCardObserver === 'function') {
+        disconnectWaterfallTwoCardObserver();
+    }
     sortedImages = sortImages(getFilteredImages());
     syncModalWithImages();
     cancelGalleryWork();
@@ -119,6 +122,8 @@ function updateImageGridViewClass() {
     imageGrid.classList.toggle('grid-view', currentViewMode === 'grid');
     imageGrid.classList.toggle('list-view', currentViewMode === 'list');
     imageGrid.classList.toggle('waterfall-view', currentViewMode === 'waterfall');
+    const toolbar = document.getElementById('waterfallToolbar');
+    if (toolbar) toolbar.hidden = currentViewMode !== 'waterfall';
 }
 
 function setViewMode(mode) {

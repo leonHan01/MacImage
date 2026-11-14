@@ -1,9 +1,14 @@
 .toolbar {
     height: var(--toolbar-height);
-    padding: 0 16px;
+    padding: 0 8px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 6px;
+    flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    scrollbar-width: thin;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
 }
@@ -11,8 +16,8 @@
 .current-folder-group {
     display: flex;
     align-items: center;
-    gap: 8px;
-    flex: 1;
+    gap: 4px;
+    flex: 0 0 170px;
     min-width: 0;
 }
 
@@ -57,14 +62,14 @@
 .toolbar-right {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 6px;
     flex-shrink: 0;
 }
 
 .view-toggle {
     display: inline-flex;
     align-items: center;
-    padding: 3px;
+    padding: 1px;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--bg-secondary);
@@ -72,8 +77,8 @@
 }
 
 .view-mode-btn {
-    width: 30px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -106,7 +111,9 @@
 }
 
 .sort-select {
-    padding: 6px 12px;
+    width: 126px;
+    height: 28px;
+    padding: 3px 6px;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     font-size: 13px;
@@ -123,7 +130,7 @@
 .competition-launcher {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
 }
 
 .competition-launcher label {
@@ -132,9 +139,9 @@
 }
 
 .competition-count-input {
-    width: 56px;
-    height: 30px;
-    padding: 4px 8px;
+    width: 44px;
+    height: 28px;
+    padding: 3px 5px;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     background: var(--bg-primary);
@@ -143,8 +150,8 @@
 }
 
 .competition-start-btn {
-    height: 30px;
-    padding: 0 12px;
+    height: 28px;
+    padding: 0 8px;
     border: none;
     border-radius: 7px;
     background: #34C759;
@@ -165,7 +172,7 @@
 }
 
 .image-count {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-secondary);
 }
 
@@ -198,7 +205,7 @@
 
 .image-grid.waterfall-view {
     display: flex;
-    padding: 8px 12px 12px;
+    padding: 4px;
     overflow-y: auto;
 }
 
@@ -207,58 +214,50 @@
     flex: 1;
     flex-direction: column;
     width: 100%;
-    min-width: 720px;
+    min-width: 0;
     min-height: 0;
 }
 
 .waterfall-toolbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 6px;
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding-left: 6px;
+    border-left: 1px solid var(--border-color);
 }
 
-.waterfall-toolbar-copy {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
+.waterfall-toolbar[hidden] {
+    display: none;
 }
 
-.waterfall-toolbar-copy strong {
-    font-size: 15px;
-}
-
-.waterfall-toolbar-copy span,
-.waterfall-target,
 .waterfall-notice,
 .waterfall-status {
     font-size: 12px;
     color: var(--text-secondary);
 }
 
-.waterfall-toolbar-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+.waterfall-selection-count {
+    padding: 0 4px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
 }
 
 .waterfall-layout-switch {
     display: inline-flex;
     gap: 2px;
-    padding: 2px;
+    padding: 1px;
     border: 1px solid var(--border-color);
     border-radius: 7px;
     background: var(--bg-secondary);
 }
 
 .waterfall-layout-btn {
-    min-height: 26px;
-    padding: 3px 8px;
+    min-height: 24px;
+    min-width: 25px;
+    padding: 2px 5px;
     border: 0;
     border-radius: 5px;
     background: transparent;
@@ -279,8 +278,8 @@
 
 .waterfall-config-btn,
 .waterfall-next-btn {
-    min-height: 32px;
-    padding: 6px 11px;
+    min-height: 28px;
+    padding: 3px 7px;
     border-radius: 7px;
     font-size: 12px;
     font-weight: 600;
@@ -317,7 +316,6 @@
     opacity: 0.7;
 }
 
-.waterfall-target,
 .waterfall-notice,
 .waterfall-status {
     overflow: hidden;
@@ -325,61 +323,12 @@
     white-space: nowrap;
 }
 
-.waterfall-target {
-    min-width: 0;
-    flex: 1 1 auto;
+.waterfall-messages {
+    flex-shrink: 0;
 }
 
-.waterfall-summary {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1 1 auto;
-    min-width: 0;
-}
-
-.waterfall-stat {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1 1 0;
-    min-width: 0;
-    min-height: 34px;
-    padding: 5px 9px;
-    border: 1px solid var(--border-color);
-    border-radius: 7px;
-    background: var(--bg-secondary);
-}
-
-.waterfall-stat span {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--text-secondary);
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.waterfall-stat strong {
-    margin-left: auto;
-    font-size: 13px;
-    white-space: nowrap;
-}
-
-.waterfall-stat-success {
-    border-color: rgba(52, 199, 89, 0.38);
-}
-
-.waterfall-stat-success strong {
-    color: #248a3d;
-}
-
-.waterfall-stat-danger {
-    border-color: rgba(255, 59, 48, 0.32);
-}
-
-.waterfall-stat-danger strong {
-    color: var(--danger-color);
+.waterfall-messages:empty {
+    display: none;
 }
 
 .waterfall-notice {
@@ -392,6 +341,56 @@
     color: #248a3d;
 }
 
+.waterfall-errors {
+    flex-shrink: 0;
+    max-height: 32vh;
+    overflow: auto;
+    margin-bottom: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--danger-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--danger-color);
+    font-size: 12px;
+    user-select: text;
+    overflow-wrap: anywhere;
+}
+
+.waterfall-error-list {
+    margin: 8px 0 0;
+    padding-left: 22px;
+    color: var(--text-primary);
+}
+
+.waterfall-error-list li + li {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+}
+
+.waterfall-error-list dl {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 4px 8px;
+    margin: 6px 0;
+}
+
+.waterfall-error-list dt {
+    color: var(--text-secondary);
+}
+
+.waterfall-error-list dd {
+    margin: 0;
+    white-space: pre-wrap;
+}
+
+.waterfall-error-list pre {
+    margin: 6px 0 0;
+    white-space: pre-wrap;
+    font-size: inherit;
+    color: var(--danger-color);
+}
+
 .waterfall-cards {
     display: grid;
     flex: 1;
@@ -399,6 +398,20 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
     align-items: stretch;
+}
+
+.waterfall-cards--2 {
+    display: flex;
+    justify-content: flex-start;
+    gap: 2px;
+}
+
+.waterfall-cards--2 .waterfall-card {
+    flex: 0 0 calc((100% - 2px) / 2);
+}
+
+.waterfall-cards--2 .waterfall-image-frame {
+    padding: 0;
 }
 
 .waterfall-cards--10 {
@@ -419,27 +432,27 @@
 }
 
 .waterfall-cards--10 .waterfall-score-controls {
-    gap: 4px;
+    gap: 3px;
 }
 
 .waterfall-cards--10 .waterfall-score-btn {
-    min-width: 39px;
+    min-width: 26px;
     min-height: 25px;
-    padding: 2px 5px;
+    padding: 2px;
     font-size: 11px;
+}
+
+.waterfall-cards--10 .waterfall-copy-btn {
+    min-width: 24px;
+    padding: 2px;
 }
 
 .waterfall-cards--10 .waterfall-image-frame {
-    padding: 1px;
-}
-
-.waterfall-cards--10 .waterfall-card-footer {
-    min-height: 28px;
-    padding: 4px 6px;
-    font-size: 11px;
+    padding: 0;
 }
 
 .waterfall-card {
+    position: relative;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -452,13 +465,20 @@
 }
 
 .waterfall-card-header {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 2;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
     min-height: 48px;
     padding: 8px 10px;
-    border-bottom: 1px solid var(--border-color);
+    background: transparent;
+    pointer-events: none;
 }
 
 .waterfall-card-number {
@@ -468,28 +488,51 @@
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
+    background: transparent;
+    color: #fff;
     font-size: 12px;
     font-weight: 700;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
 .waterfall-score-controls {
     display: flex;
+    flex-shrink: 0;
+    margin-left: auto;
     gap: 6px;
+    pointer-events: auto;
 }
 
 .waterfall-score-btn {
     min-width: 48px;
     min-height: 30px;
     padding: 4px 8px;
-    border: 1px solid var(--border-color);
+    border: 1px solid rgba(255, 255, 255, 0.3);
     border-radius: 6px;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
+    background: transparent;
+    color: #fff;
     font-size: 12px;
     font-weight: 700;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    white-space: nowrap;
     cursor: pointer;
+}
+
+.waterfall-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    padding: 4px 6px;
+}
+
+.waterfall-copy-btn svg {
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
+}
+
+.waterfall-copy-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
 }
 
 .waterfall-score-btn:hover {
@@ -499,8 +542,9 @@
 
 .waterfall-score-btn.selected {
     border-color: var(--accent-color);
-    background: var(--accent-color);
-    color: #fff;
+    background: transparent;
+    color: #91c4ff;
+    box-shadow: inset 0 0 0 1px var(--accent-color);
 }
 
 .waterfall-image-frame {
@@ -509,7 +553,7 @@
     min-height: 0;
     align-items: center;
     justify-content: center;
-    padding: 3px;
+    padding: 0;
     background: var(--bg-tertiary);
 }
 
@@ -521,57 +565,22 @@
     cursor: zoom-in;
 }
 
-.waterfall-card-footer {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 38px;
-    padding: 8px 10px;
-    font-size: 12px;
+.toolbar .server-image-count-input {
+    width: 48px;
+    height: 28px;
 }
 
-.waterfall-card-footer span {
-    min-width: 0;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.toolbar .server-image-load-btn {
+    height: 28px;
+    padding: 0 8px;
 }
 
-.waterfall-card-footer strong {
-    color: var(--accent-color);
+.toolbar .server-image-loader {
+    gap: 4px;
 }
 
-.waterfall-card-footer em {
-    color: var(--text-secondary);
-    font-style: normal;
-}
-
-@media (max-width: 1100px) {
-    .waterfall-toolbar {
-        flex-wrap: wrap;
-    }
-
-    .waterfall-summary {
-        order: 3;
-        flex-basis: 100%;
-    }
-}
-
-@media (max-width: 980px) {
-    .waterfall-page {
-        min-width: 680px;
-    }
-
-    .waterfall-toolbar-copy span {
-        display: none;
-    }
-
-    .waterfall-summary {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
+.toolbar .server-image-load-status:empty {
+    display: none;
 }
 
 .file-item {

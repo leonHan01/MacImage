@@ -8,6 +8,8 @@ function registerIpcHandlers(deps) {
         ipcMain,
         dialog,
         shell,
+        nativeImage,
+        clipboard,
         path,
         fsp,
         getMainWindow,
@@ -36,7 +38,6 @@ function registerIpcHandlers(deps) {
     const fileOperationServices = registerFileOperationHandlers({
         ipcMain,
         path,
-        store,
         imageFileOperations
     });
     registerImageLibraryHandlers({
@@ -92,6 +93,24 @@ function registerIpcHandlers(deps) {
             return stats.isFile();
         } catch {
             return false;
+        }
+    });
+
+    ipcMain.handle('copy-image', async (event, imagePath) => {
+        if (typeof imagePath !== 'string' || !path.isAbsolute(imagePath)) {
+            return { success: false, error: '无效的图片路径' };
+        }
+
+        try {
+            const image = nativeImage.createFromBuffer(await fsp.readFile(imagePath));
+            if (image.isEmpty()) {
+                return { success: false, error: '无法读取图片内容或不支持该图片格式' };
+            }
+
+            clipboard.writeImage(image);
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     });
 

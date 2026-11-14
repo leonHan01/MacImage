@@ -34,7 +34,7 @@ function createRenderer(api = {}) {
     const collection = collectionModule.create(photos.map(photo => ({ ...photo })));
     const elements = Object.fromEntries([
         'imageModal', 'modalImage', 'modalFilename', 'modalScore', 'modalImageIndex',
-        'zoomLevel', 'modalTagList', 'deleteDuplicateImagesBtn'
+        'zoomLevel', 'modalTagList', 'deleteDuplicateImagesBtn', 'copyImageBtn', 'modalCopyStatus'
     ].map(id => [id, createElement()]));
     const openedPaths = [];
     const context = vm.createContext({
@@ -51,7 +51,7 @@ function createRenderer(api = {}) {
         settingsModal: createElement(),
         document: { getElementById: id => elements[id], querySelector: () => null },
         toFileUrl: file => `file://${file}`,
-        window: { electronAPI: { onDirectoryImageMetadata: noop, ...api } },
+        window: { electronAPI: { onDirectoryImageMetadata: noop, getWaterfallPendingPages: async () => [], ...api } },
         confirm: () => true, alert: noop
     });
     for (const file of [
@@ -70,6 +70,75 @@ function createRenderer(api = {}) {
     context.addRecentOpenFile = async imagePath => { openedPaths.push(imagePath); };
     return { context, collection, elements, openedPaths };
 }
+
+test('copy uses the current preview image without changing navigation or zoom', async () => {
+    const copiedPaths = [];
+    const { context, elements } = createRenderer({
+        copyImage: async imagePath => { copiedPaths.push(imagePath); return { success: true }; }
+    });
+    context.openImageModal(1);
+    context.zoomIn();
+    await context.copyCurrentImage();
+
+    assert.deepEqual(copiedPaths, ['/photos/B.jpg']);
+    assert.equal(context.getCurrentModalImage().path, '/photos/B.jpg');
+    assert.equal(elements.zoomLevel.textContent, '125%');
+    assert.equal(elements.modalCopyStatus.textContent, '图片已复制到剪贴板');
+    assert.equal(elements.modalCopyStatus.hidden, false);
+    assert.equal(elements.copyImageBtn.disabled, false);
+
+    context.showNextImage();
+    assert.equal(elements.modalCopyStatus.hidden, true);
+    await context.copyCurrentImage();
+    assert.deepEqual(copiedPaths, ['/photos/B.jpg', '/photos/C.jpg']);
+    context.closeModal();
+    await context.copyCurrentImage();
+    assert.equal(copiedPaths.length, 2);
+});
+
+test('pending copy ignores duplicate clicks and keeps feedback tied to the requested image', async () => {
+    let finishCopy;
+    let copyCount = 0;
+    const { context, elements } = createRenderer({
+        copyImage: () => {
+            copyCount++;
+            return new Promise(resolve => { finishCopy = resolve; });
+        }
+    });
+    context.openImageModal(0);
+    const pending = context.copyCurrentImage();
+    assert.equal(elements.copyImageBtn.disabled, true);
+    await context.copyCurrentImage();
+    assert.equal(copyCount, 1);
+
+    context.showNextImage();
+    finishCopy({ success: true });
+    await pending;
+    assert.equal(elements.copyImageBtn.disabled, false);
+    assert.equal(elements.modalCopyStatus.hidden, true);
+    assert.equal(context.getCurrentModalImage().path, '/photos/B.jpg');
+});
+
+test('failed copy displays the error and allows retry after IPC failures', async () => {
+    let attempts = 0;
+    const { context, elements } = createRenderer({
+        copyImage: async () => {
+            attempts++;
+            if (attempts === 1) return { success: false, error: '无法读取图片' };
+            if (attempts === 2) throw new Error('连接失败');
+            return { success: true };
+        }
+    });
+    context.openImageModal(0);
+    await context.copyCurrentImage();
+    assert.equal(elements.modalCopyStatus.textContent, '复制失败：无法读取图片');
+    assert.equal(elements.copyImageBtn.disabled, false);
+    await context.copyCurrentImage();
+    assert.equal(elements.modalCopyStatus.textContent, '复制失败：连接失败');
+    assert.equal(elements.copyImageBtn.disabled, false);
+    await context.copyCurrentImage();
+    assert.equal(elements.modalCopyStatus.textContent, '图片已复制到剪贴板');
+});
 
 test('preview navigation and dragging share state without rebuilding the tag panel on zoom', () => {
     const { context, elements } = createRenderer();
@@ -189,4 +258,28 @@ test('removing the last visible image closes the preview even if filtered-out im
     assert.equal(collection.items.length, 3);
     assert.equal(elements.imageModal.classList.contains('show'), false);
     assert.equal(context.getCurrentModalImage(), null);
+});
+
+test('undo restores moved files and directs system-trash recovery to Finder', async () => {
+    const restored = [];
+    const messages = [];
+    let reloads = 0;
+    const { context } = createRenderer({
+        undoFileOperation: async item => { restored.push(item); return { success: true }; }
+    });
+    context.alert = message => messages.push(message);
+    context.loadFolder = async () => { reloads++; };
+    context.recordFileOperation([{ kind: 'move', originalPath: '/older.jpg', targetPath: '/target/older.jpg' }]);
+    context.recordFileOperation([
+        { kind: 'move', originalPath: '/photos/A.jpg', targetPath: '/target/A.jpg' },
+        { kind: 'system-trash', originalPath: '/photos/B.jpg' }
+    ]);
+
+    await context.undoLastDelete();
+
+    assert.deepEqual(restored.map(item => item.kind), ['move']);
+    assert.equal(restored[0].originalPath, '/photos/A.jpg');
+    assert.equal(reloads, 1);
+    assert.equal(context.deleteHistory.length, 1);
+    assert.match(messages[0], /Finder.*放回原处/);
 });

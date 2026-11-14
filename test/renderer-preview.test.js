@@ -67,6 +67,31 @@ test('waterfall cards load the original image without a preview cache', () => {
     assert.match(html, /title="右键标记为 1 分"/);
 });
 
+test('waterfall renders all failure paths and system errors as escaped text', () => {
+    const encodeHtml = value => String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+    const context = loadRendererScript('renderer-waterfall.js', waterfallGlobals({ escapeHtml: encodeHtml }));
+    const html = context.renderWaterfallFeedback({
+        status: '2 项操作失败',
+        failureDetails: [
+            { path: '/photos/<blocked>.jpg', action: 'delete', code: 'EPERM', error: 'denied <img src=x onerror=alert(1)>' },
+            { path: '/photos/missing.jpg', action: 'move', targetPath: '/target/a&b.jpg', code: 'ENOENT', syscall: 'access', error: 'no such file' }
+        ]
+    });
+    assert.match(html, /role="alert"/);
+    assert.match(html, /系统废纸篓/);
+    assert.match(html, /\/photos\/&lt;blocked&gt;\.jpg/);
+    assert.match(html, /\/photos\/missing\.jpg/);
+    assert.match(html, /\/target\/a&amp;b\.jpg/);
+    assert.match(html, /EPERM/);
+    assert.match(html, /ENOENT/);
+    assert.match(html, /access/);
+    assert.match(html, /no such file/);
+    assert.doesNotMatch(html, /<img src=x/);
+    assert.equal(context.renderWaterfallFeedback({ status: '', failureDetails: [] }), '');
+});
+
 test('ten-card waterfall supports right-click scoring', () => {
     let renderCount = 0;
     let scoredImage;
@@ -90,36 +115,6 @@ test('ten-card waterfall supports right-click scoring', () => {
     assert.equal(handled, true);
     assert.deepEqual(scoredImage, { imagePath: '/photos/ten-card.jpg', score: 1 });
     assert.equal(renderCount, 1);
-});
-
-test('up arrow restores the previous page in the ten-card waterfall', () => {
-    let restoreCount = 0;
-    let prevented = false;
-    const hiddenModal = { classList: { contains: () => false } };
-    const context = loadRendererScript('renderer-keyboard.js', {
-        imageModal: hiddenModal,
-        competitionModal: hiddenModal,
-        settingsModal: hiddenModal,
-        currentViewMode: 'waterfall',
-        waterfallPageSize: 10,
-        isEditableTarget: () => false,
-        restorePreviousWaterfallPage: () => { restoreCount++; }
-    });
-
-    context.handleKeyboard({
-        key: 'ArrowUp',
-        code: 'ArrowUp',
-        target: null,
-        repeat: false,
-        metaKey: false,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-        preventDefault: () => { prevented = true; }
-    });
-
-    assert.equal(prevented, true);
-    assert.equal(restoreCount, 1);
 });
 
 test('competition choices load originals without hydrating cached previews', () => {

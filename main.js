@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, clipboard, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('./store');
@@ -17,8 +17,8 @@ let store;
 let pendingOpenImages = [];
 let rendererReady = false;
 let ipcServices = null;
-let isQuittingAfterWaterfallCleanup = false;
-let waterfallQuitCleanupStarted = false;
+let isQuittingAfterFileOperations = false;
+let fileOperationQuitStarted = false;
 
 const userDataPath = app.getPath('userData');
 const storePath = path.join(userDataPath, 'macimage.db');
@@ -255,6 +255,7 @@ app.whenReady().then(() => {
         path,
         fileOperations,
         mapWithConcurrency,
+        trashItem: filePath => shell.trashItem(filePath),
         moveHashMappings,
         listImageEntries: directory => imageLibrary.listEntries(directory)
     });
@@ -262,6 +263,8 @@ app.whenReady().then(() => {
         ipcMain,
         dialog,
         shell,
+        nativeImage,
+        clipboard,
         path,
         fsp,
         getMainWindow: () => mainWindow,
@@ -288,21 +291,19 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
-    if (isQuittingAfterWaterfallCleanup) return;
+    if (isQuittingAfterFileOperations) return;
 
     event.preventDefault();
-    if (waterfallQuitCleanupStarted) return;
-    waterfallQuitCleanupStarted = true;
+    if (fileOperationQuitStarted) return;
+    fileOperationQuitStarted = true;
 
     Promise.resolve(ipcServices?.flushPendingWaterfallCleanup?.())
-        .then((result) => {
-            if (result?.failures?.length > 0) {
-                console.error(`Failed to flush ${result.failures.length} pending waterfall images`);
-            }
+        .then(result => {
+            if (result?.failures?.length > 0) console.error('Failed to commit retained waterfall pages:', result.failures);
         })
-        .catch(error => console.error('Error flushing pending waterfall cleanup:', error))
+        .catch(error => console.error('Error waiting for waterfall file operations:', error))
         .finally(() => {
-            isQuittingAfterWaterfallCleanup = true;
+            isQuittingAfterFileOperations = true;
             app.quit();
         });
 });

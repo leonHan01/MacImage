@@ -189,9 +189,9 @@ async function loadFolder(folderPath, options = {}) {
             window.electronAPI.getWaterfallPendingPages()
         ]);
         if (version !== directoryLoadVersion) return false;
-        const pendingPathSet = new Set(pendingPages.flatMap(page => page.paths));
+        const pendingPaths = new Set(pendingPages.flatMap(page => page.paths));
         resetWaterfallReviewSession(folderImages, pendingPages);
-        imageCollection.replace(folderImages.filter(img => !pendingPathSet.has(img.path)));
+        imageCollection.replace(folderImages.filter(image => !pendingPaths.has(image.path)));
     } catch (error) {
         if (version !== directoryLoadVersion) return false;
         throw error;

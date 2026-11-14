@@ -247,6 +247,32 @@
     background: rgba(255, 255, 255, 0.2);
 }
 
+.modal-copy-btn {
+    gap: 6px;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.modal-copy-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+
+.modal-copy-status {
+    position: absolute;
+    right: 16px;
+    bottom: 76px;
+    z-index: 10;
+    max-width: calc(100% - 32px);
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+}
+
 .zoom-level {
     color: white;
     font-size: 13px;

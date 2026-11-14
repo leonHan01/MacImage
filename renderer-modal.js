@@ -3,6 +3,7 @@ const WHEEL_NAVIGATION_COOLDOWN_MS = 220;
 let modalTagsExpanded = false;
 let closeModalOnImageClick = false;
 let isDeletingCurrentImage = false;
+let isCopyingCurrentImage = false;
 let lastWheelNavigationTime = 0;
 
 function openImageModal(index, { closeOnImageClick = false } = {}) {
@@ -50,9 +51,42 @@ function getCurrentModalImage() {
     return image?.path === imagePath ? image : null;
 }
 
+function setModalCopyStatus(message = '') {
+    const status = document.getElementById('modalCopyStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.hidden = !message;
+}
+
+async function copyCurrentImage() {
+    const img = getCurrentModalImage();
+    if (!img || isCopyingCurrentImage) return;
+
+    const button = document.getElementById('copyImageBtn');
+    isCopyingCurrentImage = true;
+    if (button) button.disabled = true;
+    setModalCopyStatus('正在复制图片…');
+
+    try {
+        const result = await window.electronAPI.copyImage(img.path);
+        if (getCurrentModalImage()?.path !== img.path) return;
+        setModalCopyStatus(result?.success
+            ? '图片已复制到剪贴板'
+            : `复制失败：${result?.error || '无法复制当前图片'}`);
+    } catch (error) {
+        if (getCurrentModalImage()?.path === img.path) {
+            setModalCopyStatus(`复制失败：${error.message || '无法复制当前图片'}`);
+        }
+    } finally {
+        isCopyingCurrentImage = false;
+        if (button) button.disabled = false;
+    }
+}
+
 function updateModalImage() {
     const img = getCurrentModalImage();
     if (!img) return;
+    setModalCopyStatus();
     
     const modalImage = document.getElementById('modalImage');
     modalImage.src = toFileUrl(img.path);
@@ -434,7 +468,7 @@ function createDeleteHistoryItem(result, img = null, index = -1) {
 
 function recordFileOperation(items) {
     const normalizedItems = (Array.isArray(items) ? items : [])
-        .filter(item => item && ['delete', 'move'].includes(item.kind))
+        .filter(item => item && ['delete', 'move', 'system-trash'].includes(item.kind))
         .map(item => ({ ...item }));
     if (normalizedItems.length > 0) {
         deleteHistory.push({ type: 'batch', items: normalizedItems });
@@ -451,9 +485,11 @@ async function undoLastDelete() {
         ? lastOperation.items
         : [lastOperation];
     const failedItems = [];
+    const systemTrashCount = operationItems.filter(item => item.kind === 'system-trash').length;
     let restoredCount = 0;
 
     for (const item of [...operationItems].reverse()) {
+        if (item.kind === 'system-trash') continue;
         const normalizedItem = item.kind ? item : { ...item, kind: 'delete' };
         let restored = false;
         try {
@@ -477,5 +513,8 @@ async function undoLastDelete() {
     }
     if (failedItems.length > 0) {
         alert(`撤销完成 ${restoredCount} 项，${failedItems.length} 项失败：${failedItems[0].originalPath}`);
+    }
+    if (systemTrashCount > 0) {
+        alert(`${systemTrashCount} 张图片已移入系统废纸篓，请在 Finder 废纸篓中使用“放回原处”恢复。`);
     }
 }

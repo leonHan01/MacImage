@@ -8,6 +8,7 @@ function createImageFileOperations(deps) {
         mapWithConcurrency,
         moveHashMappings = () => {},
         listImageEntries = async () => [],
+        trashItem,
         now = Date.now,
         concurrency = DEFAULT_CONCURRENCY
     } = deps;
@@ -139,6 +140,26 @@ function createImageFileOperations(deps) {
         }
     }
 
+    async function trashSystemMany(sourcePaths) {
+        const results = await mapWithConcurrency(normalizePaths(sourcePaths), concurrency, async (sourcePath) => {
+            const item = { originalPath: sourcePath, fileName: path.basename(sourcePath) };
+            try {
+                if (typeof trashItem !== 'function') throw new Error('系统废纸篓不可用');
+                await trashItem(path.resolve(sourcePath));
+                return { success: true, ...item, systemTrash: true };
+            } catch (error) {
+                return {
+                    success: false, ...item, path: sourcePath, action: 'delete',
+                    error: error.message || String(error), code: error.code || '', syscall: error.syscall || ''
+                };
+            }
+        });
+        return {
+            deleted: results.filter(item => item.success).map(({ success, ...item }) => item),
+            failures: results.filter(item => !item.success).map(({ success, ...item }) => item)
+        };
+    }
+
     async function restore({ sourcePath, originalPath, missingSourceError = '找不到待撤销的文件' }) {
         if (typeof sourcePath !== 'string' || typeof originalPath !== 'string') {
             return { success: false, error: '撤销操作的文件路径无效' };
@@ -193,9 +214,10 @@ function createImageFileOperations(deps) {
 
     async function moveOneToFolder(sourcePath, targetFolder) {
         const file = path.basename(sourcePath);
+        let targetPath = path.join(targetFolder, file);
         try {
-            if (!(await pathExists(sourcePath))) throw new Error('源文件不存在');
-            const targetPath = await getNumberedPath(path.join(targetFolder, file));
+            await fsp.access(sourcePath);
+            targetPath = await getNumberedPath(targetPath);
             await moveFileSafely(sourcePath, targetPath);
             return {
                 success: true,
@@ -204,7 +226,10 @@ function createImageFileOperations(deps) {
         } catch (error) {
             return {
                 success: false,
-                failure: { path: sourcePath, file, error: error.message }
+                failure: {
+                    path: sourcePath, file, targetPath,
+                    error: error.message || String(error), code: error.code || '', syscall: error.syscall || ''
+                }
             };
         }
     }
@@ -224,6 +249,7 @@ function createImageFileOperations(deps) {
         moveOne,
         trashOne,
         trashMany,
+        trashSystemMany,
         restore,
         inspectTrash,
         emptyTrash

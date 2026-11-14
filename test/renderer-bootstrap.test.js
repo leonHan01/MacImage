@@ -192,5 +192,6 @@ test('index scripts initialize settings and event subscriptions before announcin
     assert.equal(document.querySelectorAll('.view-mode-btn')
         .find(button => button.dataset.view === 'grid').classList.contains('active'), true);
     assert.equal(document.getElementById('serverDownloadConcurrencyInput').value, '3');
+    assert.equal(document.getElementById('waterfallToolbar').listeners.get('click')[0], context.handleWaterfallGridClick);
     assert.equal(vm.runInContext('smallImageThresholdKb', context), 256);
 });

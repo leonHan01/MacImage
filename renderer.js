@@ -23,6 +23,7 @@ function bindToolbarEvents() {
 }
 
 function bindGalleryEvents() {
+    document.getElementById('waterfallToolbar').addEventListener('click', handleWaterfallGridClick);
     imageGrid.addEventListener('click', (event) => {
         if (handleWaterfallGridClick(event)) return;
 
@@ -143,6 +144,7 @@ function bindModalEvents() {
     document.getElementById('deleteBtn').addEventListener('click', deleteCurrentImage);
     document.getElementById('modalQuickAddTagBtn').addEventListener('click', modalQuickAddTag);
     document.getElementById('showInFolderBtn').addEventListener('click', showCurrentImageInFolder);
+    document.getElementById('copyImageBtn').addEventListener('click', copyCurrentImage);
     document.getElementById('zoomInBtn')?.addEventListener('click', zoomIn);
     document.getElementById('zoomOutBtn')?.addEventListener('click', zoomOut);
     document.getElementById('zoomResetBtn')?.addEventListener('click', zoomReset);

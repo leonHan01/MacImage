@@ -38,10 +38,10 @@ function folderRenderer(api, session = sessionModule.create()) {
         console, setTimeout, clearTimeout, Map, Set,
         imageCollection: collection, images: collection.items, sortedImages: [],
         currentFolder: '', currentFolderEl: {}, deleteHistory: [],
-        window: { electronAPI: { onDirectoryImageMetadata: noop, ...api } },
+        window: { electronAPI: { onDirectoryImageMetadata: noop, getWaterfallPendingPages: async () => [], ...api } },
         closeModal: noop, renderEmptyImageGrid: noop,
         waitForWaterfallOperations: async () => {},
-        resetWaterfallReviewSession: (images, pages) => session.reset({ images, pendingPages: pages })
+        resetWaterfallReviewSession: (images, pendingPages) => session.reset({ images, pendingPages })
     });
     loadScript(context, 'renderer-folders.js');
     for (const name of ['resetRandomSortOrder', 'updateOpenCurrentFolderButton', 'refreshAfterImageMembershipChange', 'updateImageCount']) {
@@ -247,7 +247,7 @@ test('a late directory response cannot overwrite the latest selected folder', as
     const second = deferred();
     const context = folderRenderer({
         readDirectory: dir => dir === '/A' ? first.promise : second.promise,
-        getWaterfallPendingPaths: async () => [], getWaterfallPendingPages: async () => []
+
     });
     const openingA = context.loadFolder('/A');
     await Promise.resolve();
@@ -261,41 +261,41 @@ test('a late directory response cannot overwrite the latest selected folder', as
     assert.equal(context.imageCollection.items[0].path, '/B/b.jpg');
 });
 
-test('reloading and switching folders preserves recovery of pending waterfall pages', async (t) => {
+test('switching folders and reloading preserves retained rounds and their ratings', async (t) => {
     const directory = temporaryDirectory(t);
     const source = path.join(directory, 'source');
-    const trash = path.join(directory, 'trash');
     fs.mkdirSync(source);
-    const image = { path: path.join(source, 'pending.jpg'), name: 'pending.jpg', size: 5 };
+    const image = { path: path.join(source, 'retained.jpg'), name: 'retained.jpg', size: 5 };
     fs.writeFileSync(image.path, 'image');
     const handlers = {};
     const services = registerFileHandlers({
-        ipcMain: { handle: (name, handler) => { handlers[name] = handler; } },
-        path, store: { get: () => trash },
+        ipcMain: { handle: (name, handler) => { handlers[name] = handler; } }, path,
         imageFileOperations: createImageFileOperations({
-            fsp: fs.promises, path, fileOperations: createFileOperationUtils(), mapWithConcurrency
+            fsp: fs.promises, path, fileOperations: createFileOperationUtils(), mapWithConcurrency,
+            trashItem: async () => { throw new Error('A restored round must not be trashed'); }
         })
     });
     const session = sessionModule.create({
         processPage: page => handlers['process-waterfall-page']({}, page),
         restorePendingPage: id => handlers['restore-waterfall-pending-page']({}, id)
     });
-    await session.advance([image], { currentFolder: source, trashFolder: trash });
+    session.score(image.path, 2);
+    await session.advance([image], { currentFolder: source, targetFolder: path.join(directory, 'target') });
     const context = folderRenderer({
         readDirectory: async dir => dir === source ? [image] : [],
-        getWaterfallPendingPaths: () => handlers['get-waterfall-pending-paths'](),
         getWaterfallPendingPages: () => handlers['get-waterfall-pending-pages']()
     }, session);
     await context.loadFolder('/another-folder');
-    assert.equal(session.snapshot().canRestore, false);
+    assert.equal(session.snapshot().restorablePageCount, 0);
     await context.loadFolder(source, { preserveDeleteHistory: true });
-    assert.equal(session.snapshot().canRestore, true);
+    assert.equal(context.images.length, 0);
+    assert.equal(session.snapshot().restorablePageCount, 1);
     const restored = await session.restore(context.images);
     assert.deepEqual(restored.restoredImages, [image]);
-    assert.deepEqual(await handlers['get-waterfall-pending-paths'](), []);
-    const flushed = await services.flushPendingWaterfallCleanup();
-    assert.equal(flushed.deleted.length, 0);
+    assert.equal(session.snapshot([image]).scores.get(image.path), 2);
     assert.equal(fs.existsSync(image.path), true);
+    const flushed = await services.flushPendingWaterfallCleanup();
+    assert.equal(flushed.moved.length + flushed.deleted.length, 0);
 });
 
 test('one failed hash does not drop healthy metadata or stop later files', async () => {
@@ -365,8 +365,7 @@ test('older metadata events cannot change a reopened directory', async () => {
     const requests = [];
     const image = { path: '/A/a.jpg', tags: [], hash: 'a'.repeat(64) };
     const context = folderRenderer({
-        readDirectory: async (dir, requestId) => { requests.push(requestId); return dir === '/A' ? [image] : []; },
-        getWaterfallPendingPages: async () => []
+        readDirectory: async (dir, requestId) => { requests.push(requestId); return dir === '/A' ? [image] : []; }
     });
     context.renderImages = noop;
     context.renderTagFilter = noop;
@@ -393,15 +392,17 @@ test('switching folders waits for an active waterfall page without mixing its re
     const pageGate = deferred();
     const imageA = { path: '/A/a.jpg', name: 'a.jpg', size: 1 };
     const imageB = { path: '/B/b.jpg', name: 'b.jpg', size: 1 };
-    let pendingPages = [];
+    let imageAExists = true;
     const reads = [];
     const api = {
-        readDirectory: async folder => { reads.push(folder); return folder === '/A' ? [imageA] : [imageB]; },
-        getWaterfallPendingPages: async () => pendingPages,
+        readDirectory: async folder => {
+            reads.push(folder);
+            return folder === '/A' ? (imageAExists ? [imageA] : []) : [imageB];
+        },
         processWaterfallPage: async () => {
             await pageGate.promise;
-            pendingPages = [{ id: 'page-A', paths: [imageA.path] }];
-            return { success: true, pendingBatchId: 'page-A', pending: [{ originalPath: imageA.path }] };
+            imageAExists = false;
+            return { success: true, deleted: [{ originalPath: imageA.path, systemTrash: true }] };
         }
     };
     const context = folderRenderer(api);
@@ -409,7 +410,7 @@ test('switching folders waits for an active waterfall page without mixing its re
         MacImageWaterfallSession: sessionModule,
         initialWaterfallPageSize: 3, WATERFALL_PAGE_SIZES: [3, 10],
         WATERFALL_WHEEL_PAGE_THRESHOLD: 80, WATERFALL_WHEEL_RESET_MS: 240,
-        migrateTargetFolder: '', trashFolder: '/trash', currentViewMode: 'waterfall',
+        migrateTargetFolder: '', currentViewMode: 'waterfall',
         imageGrid: {}, recordFileOperation: noop
     });
     loadScript(context, 'renderer-waterfall.js');
@@ -424,32 +425,27 @@ test('switching folders waits for an active waterfall page without mixing its re
     await Promise.all([advancing, switching]);
     assert.equal(context.currentFolder, '/B');
     assert.deepEqual(context.images, [imageB]);
-    assert.equal(context.getWaterfallView().canRestore, false);
+    assert.equal(context.getWaterfallView().deletedCount, 0);
     await context.loadFolder('/A');
-    assert.equal(context.getWaterfallView().canRestore, true);
+    assert.equal(context.images.length, 0);
 });
 
-test('partially failed deferred cleanup keeps its remaining images recoverable', async () => {
+test('partial cleanup of an older round retains failed files and detailed errors', async () => {
     const handlers = {};
     const lostPermissionPath = '/photos/blocked.jpg';
+    const imageFileOperations = createImageFileOperations({
+        fsp: fs.promises, path, fileOperations: createFileOperationUtils(), mapWithConcurrency,
+        trashItem: async file => { if (file === lostPermissionPath) throw new Error('EACCES'); }
+    });
     registerFileHandlers({
-        ipcMain: { handle: (name, handler) => { handlers[name] = handler; } },
-        path, store: { get: () => '/trash' },
-        imageFileOperations: {
-            moveMany: async () => ({ moved: [], failures: [] }),
-            trashMany: async paths => ({
-                deleted: paths.filter(file => file !== lostPermissionPath).map(file => ({ originalPath: file, trashPath: '/trash/' + path.basename(file) })),
-                failures: paths.filter(file => file === lostPermissionPath).map(file => ({ path: file, error: 'EACCES' }))
-            })
-        }
+        ipcMain: { handle: (name, handler) => { handlers[name] = handler; } }, path, imageFileOperations
     });
     const session = sessionModule.create({ processPage: page => handlers['process-waterfall-page']({}, page) });
-    await session.advance([{ path: '/photos/ok.jpg' }, { path: lostPermissionPath }], { trashFolder: '/trash' });
-    for (let index = 0; index < 5; index++) {
-        await session.advance([{ path: `/photos/${index}.jpg` }], { trashFolder: '/trash' });
-    }
-    const pages = await handlers['get-waterfall-pending-pages']();
-    assert.deepEqual(pages[0].paths, [lostPermissionPath]);
-    assert.equal(session.snapshot().pendingImages.some(image => image.path === lostPermissionPath), true);
-    assert.equal(session.snapshot().pendingImages.some(image => image.path === '/photos/ok.jpg'), false);
+    await session.advance([{ path: '/photos/ok.jpg' }, { path: lostPermissionPath }]);
+    for (let round = 0; round < 5; round++) await session.advance([{ path: `/photos/new-${round}.jpg` }]);
+    const view = session.snapshot();
+    assert.equal(view.pendingImages.some(image => image.path === lostPermissionPath), true);
+    assert.equal(view.pendingImages.some(image => image.path === '/photos/ok.jpg'), false);
+    assert.equal(view.deletedCount, 1);
+    assert.match(view.failureDetails[0].error, /EACCES/);
 });
